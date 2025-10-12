@@ -1,5 +1,5 @@
 // lexical_analyzer.rs
-use std::{error::Error, fmt::format, rc::Rc};
+use std::{rc::Rc};
 
 use super::symbol_table::{Env,Value};
 
@@ -25,6 +25,7 @@ pub enum tokens{
     While,
     For,
     If,
+    Else,
     Do,
     Break,
 
@@ -32,12 +33,17 @@ pub enum tokens{
     Plus,
     Minus,
     Times,
-    Equals,
+    Assigns,
     Devides,
+
+    Equals,
+    Neq,
     Les,
     Leq,
     Gre,
     Geq,
+    And,
+    Or,
 
     // space control
     Open,
@@ -50,11 +56,11 @@ pub enum tokens{
 // regx for all of the things
 
 
-pub struct parser {
+pub struct Lexer {
     pub(crate) root_env: Env
 }
 
-impl parser{
+impl Lexer{
     pub fn custom_lexer(&mut self, raw_code:&str) -> Result<Vec<tokens>, String>{
         let mut out: Vec<tokens> = vec![];
 
@@ -84,6 +90,7 @@ impl parser{
                     "while" => {out.push(tokens::While); code_left = &code_left[segment.len()..]; break;}
                     "for" => {out.push(tokens::For); code_left = &code_left[segment.len()..]; break;}
                     "if" => {out.push(tokens::If); code_left = &code_left[segment.len()..]; break;}
+                    "else" => {out.push(tokens::If); code_left = &code_left[segment.len()..]; break;}
                     "do" => {out.push(tokens::Do); code_left = &code_left[segment.len()..]; break;}
                     "break" => {out.push(tokens::Break); code_left = &code_left[segment.len()..]; break;}
                     
@@ -91,7 +98,8 @@ impl parser{
                     ";" => {out.push(tokens::Stop); code_left = &code_left[segment.len()..]; break;}
                     "+" => {out.push(tokens::Plus); code_left = &code_left[segment.len()..]; break;}
                     "-" => {out.push(tokens::Minus); code_left = &code_left[segment.len()..]; break;}
-                    "=" => {out.push(tokens::Equals); code_left = &code_left[segment.len()..]; break;}
+                    "= " => {out.push(tokens::Assigns); code_left = &code_left[segment.len()..]; break;}
+                    "==" => {out.push(tokens::Equals); code_left = &code_left[segment.len()..]; break;}
                     "*" => {out.push(tokens::Times); code_left = &code_left[segment.len()..]; break;}
                     "/" => {out.push(tokens::Devides); code_left = &code_left[segment.len()..]; break;}
                     "(" => {out.push(tokens::Open); code_left = &code_left[segment.len()..]; break;}
@@ -102,7 +110,12 @@ impl parser{
                     "> " => {out.push(tokens::Gre); code_left = &code_left[segment.len()..]; break;}
                     "<=" => {out.push(tokens::Leq); code_left = &code_left[segment.len()..]; break;}
                     ">=" => {out.push(tokens::Geq); code_left = &code_left[segment.len()..]; break;}
+                    "&&" => {out.push(tokens::And); code_left = &code_left[segment.len()..]; break;}
+                    "||" => {out.push(tokens::Or); code_left = &code_left[segment.len()..]; break;}
+                    "!=" => {out.push(tokens::Neq); code_left = &code_left[segment.len()..]; break;}
 
+
+                    // something that ends weird and not taken care of by something else
                     x if !is_last_char_letter(x) && x.len() > 1 => {
 
                         if local_env.get(x[..x.len()-1].to_owned()).is_some(){
@@ -296,7 +309,7 @@ impl parser{
                 tokens::Plus => built = built + "+ ",
                 tokens::Minus => built = built + "- ",
                 tokens::Times => built = built + "* ",
-                tokens::Equals => built = built + "= ",
+                tokens::Equals => built = built + "== ",
                 tokens::Devides => built = built + "/ ",
                 tokens::Open => built = built + "( ",
                 tokens::Close => built = built + ") ",
@@ -311,7 +324,12 @@ impl parser{
                 tokens::Gre => built = built + "> ",
                 tokens::Geq => built = built + ">= ",
                 tokens::If => built = built + "if ",
+                tokens::Else => built = built + "if ",
                 tokens::Break => built = built + "break ",
+                tokens::Assigns => built = built + "= ",
+                tokens::And => built = built + "&& ",
+                tokens::Or => built = built + "|| ",
+                tokens::Neq => built = built + "!= ",
             }
         }
         return built;
@@ -328,9 +346,9 @@ fn is_last_char_letter(s: &str) -> bool {
 #[test]
 pub fn test_lexer() {
     let code = "int i;\n\twhile (true)\n\t\ti=i+1;";
-    let mut par = parser{root_env:Env::new(None)};
+    let mut par = Lexer{root_env:Env::new(None)};
     let result = par.custom_lexer(code).unwrap();
-    println!("{}", parser::renderer(result));
+    println!("{}", Lexer::renderer(result));
     par.root_env.print_all();
 }
 
@@ -339,9 +357,9 @@ use std::fs;
 pub fn test_lexer_from_file(){
     let contents = fs::read_to_string("TestSuites2/1.txt");
     let code = contents.unwrap();
-    let mut par = parser{root_env:Env::new(None)};
+    let mut par = Lexer{root_env:Env::new(None)};
     let result = par.custom_lexer(&code).unwrap();
-    println!("{}", parser::renderer(result));
+    println!("{}", Lexer::renderer(result));
     println!("------------");
     par.root_env.print_all();
 }
@@ -355,19 +373,19 @@ fn true_file_test(){
         let file_to_parse = &args[1];
         let file = fs::read_to_string(file_to_parse);
         if file.is_ok(){
-            let mut parser = parser{
+            let mut lexer = Lexer{
                 root_env: Env::new(None),
             };
 
             
-            let lex_output = parser.custom_lexer(&file.unwrap());
+            let lex_output = lexer.custom_lexer(&file.unwrap());
             if lex_output.is_err(){
                 println!("Parsing failed :(");
                 return;
             }else {
-                println!("{}", parser::renderer(lex_output.unwrap()));
+                println!("{}", Lexer::renderer(lex_output.unwrap()));
                 println!("\nParsing completed successfully.\n\nSymbol Table:\n\n----");
-                parser.root_env.print_all();
+                lexer.root_env.print_all();
                 return;
             }
 
