@@ -1,0 +1,8 @@
+{
+    bool status_array [ 3 ] ;
+    int val_a ;
+    int val_b ;
+    val_a = 5 ;
+    val_b = 3 ;
+    status_array[1] = (val_a > val_b && (false || true)) == ! false ;
+}

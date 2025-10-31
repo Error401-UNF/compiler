@@ -1,0 +1,13 @@
+{
+    int i ;
+    int j ;
+    i = 5 ;
+    j = 1 ;
+    do {
+        i = i - 1 ;
+        while (j < 3) {
+            j = j + 1 ;
+            if (j == 2) break ;
+        }
+    } while (i > 0) ;
+}

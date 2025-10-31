@@ -1,5 +1,5 @@
 // lexical_analyzer.rs
-use std::{rc::Rc};
+use std::rc::Rc;
 
 use super::symbol_table::{Env,Value};
 
@@ -12,10 +12,10 @@ pub enum tokens{
     Basic(Value),
     Number(i32),
     Real(f32),
-    Array(Value, i32), // thing stored in array and array of size
 
     // calling array
-    GetValue(Rc<tokens>, Rc<tokens>), // gets value from array with id string (value here so it can be a token)
+    ArrayEquationStart,
+    ArrayEquationEnd,
 
     // static types
     True,
@@ -45,11 +45,13 @@ pub enum tokens{
     And,
     Or,
 
+    Not,
+
     // space control
-    Open,
+    Open, // pren
     Close,
     Stop,
-    StartEnclose,
+    StartEnclose, // squigly
     EndEnclose,
 }
 
@@ -79,7 +81,7 @@ impl Lexer{
                     
                     // all of basic
                     "int" => {out.push(tokens::Basic(Value::AnyInt)); code_left = &code_left[segment.len()..]; break;}
-                    "boolean" => {out.push(tokens::Basic(Value::AnyBool)); code_left = &code_left[segment.len()..]; break;}
+                    "bool" => {out.push(tokens::Basic(Value::AnyBool)); code_left = &code_left[segment.len()..]; break;}
                     "float" => {out.push(tokens::Basic(Value::AnyFloat)); code_left = &code_left[segment.len()..]; break;}
 
                     // absalute values
@@ -90,7 +92,7 @@ impl Lexer{
                     "while" => {out.push(tokens::While); code_left = &code_left[segment.len()..]; break;}
                     "for" => {out.push(tokens::For); code_left = &code_left[segment.len()..]; break;}
                     "if" => {out.push(tokens::If); code_left = &code_left[segment.len()..]; break;}
-                    "else" => {out.push(tokens::If); code_left = &code_left[segment.len()..]; break;}
+                    "else" => {out.push(tokens::Else); code_left = &code_left[segment.len()..]; break;}
                     "do" => {out.push(tokens::Do); code_left = &code_left[segment.len()..]; break;}
                     "break" => {out.push(tokens::Break); code_left = &code_left[segment.len()..]; break;}
                     
@@ -113,7 +115,24 @@ impl Lexer{
                     "&&" => {out.push(tokens::And); code_left = &code_left[segment.len()..]; break;}
                     "||" => {out.push(tokens::Or); code_left = &code_left[segment.len()..]; break;}
                     "!=" => {out.push(tokens::Neq); code_left = &code_left[segment.len()..]; break;}
+                    "! " => {out.push(tokens::Not); code_left = &code_left[segment.len()..]; break;}
+                    "[" => {out.push(tokens::ArrayEquationStart); code_left = &code_left[segment.len()..]; break;}
+                    "]" => {out.push(tokens::ArrayEquationEnd); code_left = &code_left[segment.len()..]; break;}
 
+                    x if x.chars().last().eq(&Some('[')) && x.len() != 1 => {
+                        // should be a known array variable
+                        if local_env.get(x[..x.len()-1].to_owned()).is_some(){
+                            // known variable
+                            out.push(tokens::Id(x[..x.len()-1].to_owned()));
+                            code_left = &code_left[segment.len()-1..];
+                            break;
+                        }
+                        else {
+                            println!("Array of non-known id");
+                            code_left = &code_left[segment.len()-1..];
+                            break;
+                        }
+                    }
 
                     // something that ends weird and not taken care of by something else
                     x if !is_last_char_letter(x) && x.len() > 1 => {
@@ -128,53 +147,17 @@ impl Lexer{
 
                         // we have a set of something then the full stop or space or end of file. This would be an expression we couldnt parse individually.
 
-                        if let Some(&tokens::Basic(_)) = out.last() { 
-                            // check for array
-                            // check for array (no id attached yet)
-                            if x.chars().nth(0).eq(&Some('[')){
-                                // this is an array block
-                                let num_string = &x[1..x.len()-1]; // isolates number from brackets and the stop symbol ";" or " "
-                                let i = num_string.parse::<i32>();
-                                if i.is_ok(){
-                                    let last_token = out.last().unwrap();
-                                    match last_token {
-                                        tokens::Basic(v) => {
-                                        out.push(tokens::Array(v.clone(),i.unwrap()));
-                                        code_left = &code_left[segment.len()..];
-                                        if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
-                                        break;
-                                        },
-                                        _ => {
-                                            println!("Array error. got {}", segment);
-                                            code_left = &code_left[segment.len()..];
-                                            break;
-                                        },// error ???
-                                    }
-                                }
-                                else {
-                                    println!("Array error. got {}", segment);
-                                    code_left = &code_left[segment.len()..];
-                                    break;
-                                }
-                            }
-
+                        if let Some(&tokens::Basic(_)) = out.last() {
                             // default to id
-                            // new definition 
                             let last_token = out.last().unwrap();
                             match last_token {
                                 tokens::Basic(v) => {
                                     local_env.put(x[..x.len()-1].to_owned(), v.clone());
                                     out.push(tokens::Id(x[..x.len()-1].to_owned()));
                                     // full stop afterwards?
-                                    if x.chars().last().eq(&Some(';')){
-                                        out.push(tokens::Stop);
-                                        code_left = &code_left[segment.len()..];
-                                        break;
-                                    } else{ // dosnt take into account = segment yet
-                                        println!("Encounterd a weird space {}",x);
-                                        code_left = &code_left[segment.len()..];
-                                        break;
-                                    }
+                                    code_left = &code_left[segment.len()..];
+                                    if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
+                                    break;
                                 }
                                 _ => {
                                     println!("Token error. got {}", segment);
@@ -185,57 +168,33 @@ impl Lexer{
                             }
                             
                         }
-                        
-                        // if the last thing was an array. This must be an id
-                        if let Some(&tokens::Array(_,_)) = out.last() { 
-                            let last_token = out.last().unwrap();
-                            match last_token {
-                                tokens::Array(v,_) => {
-                                local_env.put(x[..x.len()-1].to_owned(), v.clone());
-                                out.push(tokens::Id(x[..x.len()-1].to_owned()));
-                                code_left = &code_left[segment.len()..];
-                                if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
-                                break;
-                                },
-                                _ => {
-                                    println!("Array error. got {}", segment);
-                                    code_left = &code_left[segment.len()..];
-                                    break;
-                                },// error ???
-                            }
-                        }
 
-                        // if last thing was an id check for array?
-                        if let Some(&tokens::Id(_)) = out.last() { 
-                            if Some('[') == x.chars().nth(0) && Some(']') == x.chars().nth(x.len()-1){
-                                // surrunded by []'s
-                                let last_token = out.last().unwrap();
-                                match last_token {
-                                    tokens::Id(v) => {
-                                    // determin if the thing inside is a id or a number
-                                    if local_env.get(x[1..x.len()-1].to_owned()).is_some(){
-                                        out.push(tokens::GetValue(tokens::Id(v.to_string()).into(), tokens::Id(x[1..x.len()-1].to_owned()).into()));
-                                    }
-                                    else {
-                                        let i:Result<i32, _> = x[1..x.len()-1].parse();
-                                        if i.is_ok(){
-                                            out.push(tokens::GetValue(tokens::Id(v.to_string()).into(), tokens::Number(i.unwrap()).into()));
-                                        } else {
-                                            println!("Parse of array get val Wrong, {}", segment)
-                                        }
-                                    }
-                                    code_left = &code_left[segment.len()..];
+                        
+
+                         // check for incomplete array
+                        if let Some(tokens::ArrayEquationEnd) = out.last() {
+                            // new eq and its likly a [i again
+                            if Some('[') == x.chars().nth(0){
+                                // throw in an eq starter and keep parsing
+                                out.push(tokens::ArrayEquationStart);
+                                code_left = &code_left[1..];
+                                break;
+                            } else if Some(';') == x.chars().last() || Some(' ') == x.chars().last(){
+                                // its a new id.
+                                let id_value = Self::compile_arr(&out);
+                                if id_value.is_ok(){
+                                    local_env.put(x[..x.len()-1].to_owned(), id_value.unwrap());
+                                    out.push(tokens::Id(x[..x.len()-1].to_owned()));
                                     if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
-                                    break;
-                                    },
-                                    _ => {
-                                        println!("Array error. got {}", segment);
-                                        code_left = &code_left[segment.len()..];
-                                        break;
-                                    },// error ???
+                                    
+                                } else {
+                                    println!("Id Value Error: {}",segment)
                                 }
+                                code_left = &code_left[segment.len()..];
+                                break;
+                            } else {
+                                println!("Array lexing error: {}",segment)
                             }
-                            
                         }
 
                         // number?
@@ -246,30 +205,21 @@ impl Lexer{
                             out.push(tokens::Number(i.unwrap()));
                             code_left = &code_left[segment.len()..];
                             if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
+                            if x.chars().last().eq(&Some(')')){ out.push(tokens::Close);}
+                            if x.chars().last().eq(&Some(']')){ out.push(tokens::ArrayEquationEnd);}
                             break;
                         } else if r.is_ok(){
                             out.push(tokens::Real(r.unwrap()));
                             code_left = &code_left[segment.len()..];
                             if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
+                            if x.chars().last().eq(&Some(')')){ out.push(tokens::Close);}
+                            if x.chars().last().eq(&Some(']')){ out.push(tokens::ArrayEquationEnd);}
                             break;
                         }
                         return Err(format!("problem with segment {:?}: {:?}",segment, out));
                     }
 
-                    x if x.chars().last().eq(&Some('[')) && x.len() != 1 => {
-                        // should be a known array variable
-                        if local_env.get(x[..x.len()-1].to_owned()).is_some(){
-                            // known variable
-                            out.push(tokens::Id(x.to_owned()));
-                            code_left = &code_left[segment.len()-1..];
-                            break;
-                        }
-                        else {
-                            println!("Array of non-known id");
-                            code_left = &code_left[segment.len()-1..];
-                            break;
-                        }
-                    }
+
 
 
                     _ => {
@@ -288,6 +238,50 @@ impl Lexer{
         self.root_env = local_env;
 
         return Ok(out);
+    }
+
+    fn compile_arr(out:&Vec<tokens>) -> Result<Value, String>{
+        // go backwards until you find a basic. any numbers / ids are taken note of
+        let mut current_position = out.len() - 1;
+        let mut sizes: Vec<i32> = vec![];
+        let basic_val:Value;
+        loop{
+
+            if let tokens::Basic( v ) = &out[current_position] {
+                basic_val = v.clone();
+                break;
+            } else {
+                match  &out[current_position]  {
+                    // you can have either something of size number or of an id. everytning else is thrown out
+                    tokens::Number( n) => {
+                        sizes.push(*n)
+                    },
+                    _ => 'inner: {
+                        break 'inner;
+                    }
+                }
+            }
+            if current_position != 0{
+                current_position -= 1;
+            }
+            else {
+                // prevent underflow by any means
+                return Err(format!("Did not parse array correctly"));
+            }
+        }
+        // basic found
+        if !sizes.is_empty(){
+            sizes.reverse();
+            let mut cur_ref = Value::ArrayOf(basic_val.clone().into(), sizes.pop().unwrap());
+
+            for next_size in sizes.iter().rev() {
+                cur_ref = Value::ArrayOf(cur_ref.clone().into(), *next_size);
+            }
+            return Ok(cur_ref);
+        }
+        else {
+            return Ok(basic_val);
+        }
     }
 
 
@@ -316,8 +310,6 @@ impl Lexer{
                 tokens::Stop => built = built + "; ",
                 tokens::StartEnclose => built = built + "{ ",
                 tokens::EndEnclose => built = built + "} ",
-                tokens::Array(_value, _n) =>  built = built + "[ num ] ",
-                tokens::GetValue(_, to_token) => {let rec = Self::renderer(vec![Rc::unwrap_or_clone(to_token)]); built = built + &format!("[ {} ] ", &rec[..rec.len()-1]);},
                 tokens::Do => built = built + "do ",
                 tokens::Les => built = built + "< ",
                 tokens::Leq => built = built + "<= ",
@@ -330,6 +322,9 @@ impl Lexer{
                 tokens::And => built = built + "&& ",
                 tokens::Or => built = built + "|| ",
                 tokens::Neq => built = built + "!= ",
+                tokens::ArrayEquationStart => built = built + "[ ",
+                tokens::ArrayEquationEnd => built = built + "] ",
+                tokens::Not => built = built + "! ",
             }
         }
         return built;
@@ -339,9 +334,11 @@ impl Lexer{
 fn is_last_char_letter(s: &str) -> bool {
     s.chars()
      .last() // Returns Option<char>
-     .map_or(false, |c| c.is_alphanumeric()) 
-    || s.chars().last().eq(&Some('['))
+     .map_or(false, |c| c.is_alphanumeric())
+     || s.chars().last().eq(&Some('_'))
+     || s.chars().last().eq(&Some('.'))
 }
+
 
 #[test]
 pub fn test_lexer() {

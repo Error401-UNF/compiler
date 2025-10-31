@@ -1,0 +1,12 @@
+{
+    int main_data ;
+    main_data = 100 ;
+    if (main_data > 50) {
+        int temp_val ;
+        bool flag ;
+        temp_val = main_data / 10 ;
+        flag = true ;
+        if (flag) temp_val = 0 ;
+    }
+    main_data = main_data + 1 ;
+}

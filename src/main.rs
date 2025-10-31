@@ -1,5 +1,7 @@
 
 // import from other files
+// to build use cargo build
+// Then the compiler generated is at target/debug/COMPILER
 mod symbol_table;
 mod lexical_analyzer;
 mod parser;
@@ -11,7 +13,10 @@ use std::env;
 use std::fs;
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+use crate::lexical_analyzer::Lexer;
+use crate::parser::Parser;
+
+fn main() -> ExitCode{
     let args:Vec<String> = env::args().collect();
     if !args.is_empty(){
         // something in the argument. expect 1 file arguement
@@ -24,12 +29,24 @@ fn main() -> ExitCode {
             
             let lex_output= lexer.custom_lexer(&file.unwrap());
             if lex_output.is_err(){
-                println!("Parsing failed :(");
+                println!("lexing failed :(");
+                println!("{}", lex_output.unwrap_err());
                 return ExitCode::from(1);
             }else {
+                lexer.root_env.detailed_print_all();
 
-                
-                let _ = parser::Parser::parse(lex_output.unwrap(), lexer.root_env);
+                println!("{:?}", lex_output.clone().unwrap());
+
+                let res = Parser::parse(lex_output.unwrap(), lexer.root_env);
+                if res.is_err(){
+                    println!("Error: {}",res.unwrap_err());
+                    return ExitCode::from(1);
+                } else {
+                    println!("Parsing Finished");
+                    let controller = res.unwrap();
+                    //controller.render_node(0); // node index 0 is always root of tree
+                return ExitCode::from(0);
+                }
             }
 
         }
@@ -41,6 +58,25 @@ fn main() -> ExitCode {
         println!("no file given")
     }
     return ExitCode::from(1);
+}
+
+fn main2() {
+    let code = "{int i;\n\twhile (true)\n\t\ti = i + 1;}";
+    let mut par = Lexer{root_env:symbol_table::Env::new(None)};
+    let result = par.custom_lexer(code).unwrap();
+    println!("{}", Lexer::renderer(result.clone()));
+    par.root_env.print_all();
     
+    
+    let res = Parser::parse(result, par.root_env);
+
+    if res.is_err(){
+        println!("Error: {}",res.unwrap_err())
+    } else {
+        println!("Parsing Finished");
+        let controller = res.unwrap();
+        controller.render_node(0); // node index 0 is always root of tree
+    }
+
 }
 

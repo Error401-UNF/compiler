@@ -1,0 +1,10 @@
+{
+    int i ;
+    float result ;
+    i = 10 ;
+    result = 5.5 ;
+    if (i * 2 + 10 < 35) {
+        if (result * 2 == 11.0) result = result / 2.0 ;
+            else result = 1.0 - result ;
+    } else result = 0.0 ;
+}

@@ -14,11 +14,12 @@ pub enum Value {
     Bool(bool),
     AnyFloat,
     Float(f32),
+    ArrayOf(Rc<Value>,i32),
     Null
 }
 
 impl Value {
-    pub fn render(self) -> String{
+    pub fn render(&self) -> String{
         match self {
             Value::AnyInt => return format!("int"),
             Value::Int(i) => return format!("{}",i),
@@ -28,6 +29,7 @@ impl Value {
             Value::Bool(b) => return format!("{}",b),
             Value::AnyFloat => return format!("float"),
             Value::Float(f) => return format!("{}", f),
+            Value::ArrayOf(v, i) => return format!("{:?}[{}]",v.render(),i),
             Value::Null => return format!(""),
         }
     }
@@ -63,6 +65,16 @@ impl Env {
     pub fn print_all(&self){
         for pairs in self.table.clone() {
             println!("ID: {}", pairs.0, );
+        }
+        println!("----");
+        // recurse
+        if let Some(prev_env) = &self.prev {
+            <Env as Clone>::clone(&prev_env).print_all();
+        }
+    }
+    pub fn detailed_print_all(&self){
+        for pairs in self.table.clone() {
+            println!("ID: {}, Value {:?}", pairs.0, pairs.1);
         }
         println!("----");
         // recurse

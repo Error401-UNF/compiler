@@ -1,0 +1,6 @@
+{
+    bool final_check ;
+    int a ;
+    a = 5 ;
+    final_check = (a * 2 < 12 && (true || false)) || (10 != 10) ;
+}
