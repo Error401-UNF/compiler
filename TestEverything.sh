@@ -1,9 +1,9 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# Define paths
 COMPILER_PATH="./target/debug/COMPILER"
 TESTS_DIR="./Tests"
 FAILURES_LOG="failed_tests_output.log" # File to store the output of failing tests
+TIMEOUT_SECONDS=1 # Set the maximum runtime in seconds
 
 # --- Setup and Validation ---
 if [ ! -f "$COMPILER_PATH" ]; then
@@ -16,13 +16,21 @@ if [ ! -d "$TESTS_DIR" ]; then
     exit 1
 fi
 
+# Check for the 'timeout' utility
+if ! command -v timeout &> /dev/null
+then
+    echo "Error: 'timeout' command not found." >&2
+    echo "Please install coreutils (e.g., 'sudo apt install coreutils' on Debian/Ubuntu)." >&2
+    exit 1
+fi
+
 # Clean up the previous log file if it exists
 > "$FAILURES_LOG"
 
-echo "--- Starting Compiler Tests ---"
-echo "Compiler: $COMPILER_PATH"
-echo "Test Directory: $TESTS_DIR"
-echo "-------------------------------"
+echo "--- Starting Compiler Tests (Smart Mode with Timeout) ---"
+echo "Rule: Test files with 'fail' in the filename expect non-zero exit code."
+echo "Timeout: $TIMEOUT_SECONDS seconds per test."
+echo "--------------------------------------------"
 
 # Initialize counters
 SUCCESS_COUNT=0
@@ -34,51 +42,95 @@ for TEST_FILE in $(find "$TESTS_DIR" -type f -name "*.txt" | sort); do
     
     TOTAL_COUNT=$((TOTAL_COUNT + 1))
     TEST_NAME=$(basename "$TEST_FILE")
-
-    echo -n "Running test: $TEST_NAME... "
-
-    # Execute the compiler and CAPTURE ITS OUTPUT to a temporary variable
-    # We use 'tee' with a pipe to capture output AND check the exit code later
     
-    # Run the compiler, piping its output to the terminal AND a temporary variable
-    # To capture output accurately, we must redirect both stdout and stderr
-    OUTPUT=$("$COMPILER_PATH" "$TEST_FILE" 2>&1 >/dev/null) # Run silently first to check exit code
+    # --- 1. Check Filename for Forced Failure ---
+    EXPECT_TO_FAIL=false
+    
+    # Check if the filename (converted to lowercase) contains "fail"
+    if [[ $(echo "$TEST_NAME" | tr '[:upper:]' '[:lower:]') == *fail* ]]; then
+        EXPECT_TO_FAIL=true
+    fi
+    
+    EXPECTATION=$(if $EXPECT_TO_FAIL; then echo "FAIL"; else echo "PASS"; fi)
+    echo -n "Running test: $TEST_NAME (Expect: $EXPECTATION)... "
+
+    # --- 2. Run Compiler with TIMEOUT ---
+    # The timeout command executes the compiler.
+    # It redirects all compiler output (stdout and stderr) to the $OUTPUT variable.
+    OUTPUT=$(timeout --foreground $TIMEOUT_SECONDS "$COMPILER_PATH" "$TEST_FILE" 2>&1) 
     EXIT_CODE=$?
+
+    # Check for the specific exit code of a timeout (usually 124)
+    if [ $EXIT_CODE -eq 124 ]; then
+        # Handle Timeout Case
+        ACTUAL_RESULT="TIMEOUT"
+    else
+        # Handle Normal/Error Exit Case
+        ACTUAL_RESULT="Exit $EXIT_CODE"
+    fi
+
+    # --- 3. Determine Result (PASS/FAIL) ---
+    PASS=false
+    REASON=""
     
-    if [ $EXIT_CODE -eq 0 ]; then
-        # Success
+    if [ $EXIT_CODE -eq 124 ]; then
+        # Timeout always counts as a failure against expectations
+        PASS=false
+        REASON="Test TIMED OUT after $TIMEOUT_SECONDS seconds."
+    elif $EXPECT_TO_FAIL; then
+        # Expected to FAIL: passes if exit code is NOT 0
+        if [ $EXIT_CODE -ne 0 ]; then
+            PASS=true 
+        else
+            PASS=false
+            REASON="Expected FAIL, but compiler PASSED (Exit 0)."
+        fi
+    else
+        # Expected to PASS: passes if exit code IS 0
+        if [ $EXIT_CODE -eq 0 ]; then
+            PASS=true 
+        else
+            PASS=false
+            REASON="Expected PASS, but compiler FAILED (Exit $EXIT_CODE)."
+        fi
+    fi
+    
+    # --- 4. Report and Log ---
+    if $PASS; then
         echo -e "\e[32mPASS\e[0m" 
         SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
     else
-        # Failure: Rerun the command, capture output, and log it
-        echo -e "\e[31mFAIL (Exit Code: $EXIT_CODE)\e[0m" 
+        # This is a true failure
+        echo -e "\e[31mFAIL ($ACTUAL_RESULT)\e[0m" 
         FAIL_COUNT=$((FAIL_COUNT + 1))
         
         # --- Log the Output ---
         echo "==============================================" >> "$FAILURES_LOG"
-        echo "FAIL: Test $TEST_NAME (Exit Code: $EXIT_CODE)" >> "$FAILURES_LOG"
-        echo "--- Compiler Output ---" >> "$FAILURES_LOG"
-        
-        # Rerun the command and append the actual output to the log file
-        "$COMPILER_PATH" "$TEST_FILE" 2>&1 >> "$FAILURES_LOG"
+        echo "FAIL: Test $TEST_NAME" >> "$FAILURES_LOG"
+        echo "Reason: $REASON" >> "$FAILURES_LOG"
+        echo "--- Compiler Output (Input: $TEST_NAME) ---" >> "$FAILURES_LOG"
+        # If it was a timeout, the output might be empty, so log a clear message
+        if [ $EXIT_CODE -eq 124 ]; then
+            echo "(Program killed by timeout after $TIMEOUT_SECONDS seconds. Output may be incomplete or empty.)" >> "$FAILURES_LOG"
+        fi
+        echo "$OUTPUT" >> "$FAILURES_LOG"
         echo "==============================================" >> "$FAILURES_LOG"
-        # --- End Logging ---
     fi
 
 done
 
 # --- Summary ---
-echo "-------------------------------"
+echo "--------------------------------------------"
 echo "Testing complete."
-echo "Total Tests: $TOTAL_COUNT"
-echo "Passed: \e[32m$SUCCESS_COUNT\e[0m"
-echo "Failed: \e[31m$FAIL_COUNT\e[0m"
-echo "-------------------------------"
+echo -e "Total Tests: $TOTAL_COUNT"
+echo -e "Passed: \e[32m$SUCCESS_COUNT\e[0m"
+echo -e "Failed: \e[31m$FAIL_COUNT\e[0m"
+echo "--------------------------------------------"
 
 if [ $FAIL_COUNT -gt 0 ]; then
-    echo "Check the file '$FAILURES_LOG' for the output of all failing tests."
+    echo "Check the file '$FAILURES_LOG' for details on all test discrepancies."
     exit 1
 else
-    echo "All tests passed successfully!"
+    echo "All tests passed according to defined expectations! 🎉"
     exit 0
 fi

@@ -1,0 +1,8 @@
+{
+    int x ;
+    bool flag ;
+    x = 5 ;
+
+    flag = x < 10 ;
+    flag = true ; 
+}

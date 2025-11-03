@@ -5,16 +5,27 @@
 mod symbol_table;
 mod lexical_analyzer;
 mod parser;
+mod type_checker;
+mod syntax_evaluator;
+mod Intermideate_generator;
 
-
-
+use std::cell::RefCell;
 // for collecting command line arguements
 use std::env;
 use std::fs;
+use std::ops::Deref;
 use std::process::ExitCode;
+use std::rc::Rc;
 
-use crate::lexical_analyzer::Lexer;
-use crate::parser::Parser;
+use parser::Parser;
+use symbol_table::Env;
+use lexical_analyzer::Lexer;
+use type_checker::size_calculator;
+use syntax_evaluator::Syntaxer;
+
+use crate::syntax_evaluator::SyntaxTree;
+use crate::syntax_evaluator::{IndexBox, SyntaxTreeNode};
+
 
 fn main() -> ExitCode{
     let args:Vec<String> = env::args().collect();
@@ -23,8 +34,10 @@ fn main() -> ExitCode{
         let file_to_parse = &args[1];
         let file = fs::read_to_string(file_to_parse);
         if file.is_ok(){
-            let mut lexer = lexical_analyzer::Lexer{
-                root_env: symbol_table::Env::new(None),
+            let root = Env::new_root();
+            let mut lexer = Lexer{
+                root_env: Rc::clone(&root),
+                all_scopes: vec![Rc::clone(&root)]
             };
             
             let lex_output= lexer.custom_lexer(&file.unwrap());
@@ -33,19 +46,56 @@ fn main() -> ExitCode{
                 println!("{}", lex_output.unwrap_err());
                 return ExitCode::from(1);
             }else {
-                lexer.root_env.detailed_print_all();
-
-                println!("{:?}", lex_output.clone().unwrap());
-
-                let res = Parser::parse(lex_output.unwrap(), lexer.root_env);
+                Env::print_detailed_down(&lexer.root_env,0);
+                //println!("{:?}", lex_output.clone().unwrap());
+                println!("lexing finished");
+                let parser = Parser {
+                    all_scopes: lexer.all_scopes,
+                };
+                let res = parser.parse(lex_output.unwrap(), &lexer.root_env);
                 if res.is_err(){
                     println!("Error: {}",res.unwrap_err());
                     return ExitCode::from(1);
                 } else {
                     println!("Parsing Finished");
-                    let controller = res.unwrap();
-                    //controller.render_node(0); // node index 0 is always root of tree
-                return ExitCode::from(0);
+                    let mut controller = res.unwrap();
+                    let size_out = size_calculator(&lexer.root_env);
+                    println!("Size calculations\n{:?}",size_out.unwrap());
+                
+                    // start syntaxing
+                    println!("Syntax Starting");
+                    let controler_copy = controller.clone();
+                    let root = controler_copy.get_weak(0);
+                    let mut syntaxer = Syntaxer {
+                        controler: controller,
+                        valid_trees: Vec::new(),
+                    };
+
+                    // find all ast locations
+                    syntaxer.find_all_trees(root.unwrap().clone());
+                    let mut all_ast_trees: Vec<SyntaxTree> = Vec::new();
+                    for tree_root in syntaxer.valid_trees.clone() {
+                        let raw_tree  = syntaxer.make_tree(tree_root);
+                        if raw_tree.is_ok() {
+                            let mut ok_tree = raw_tree.unwrap();
+                            let vector_clone = Rc::clone(&ok_tree.tree_vector);
+                            let mut vector_borrow = vector_clone.borrow_mut();
+                            let r  = syntaxer.fix_tree(&ok_tree, &mut vector_borrow,IndexBox::new(0));
+                            if r.is_ok() {
+                                ok_tree.top_node = r.unwrap();
+                                all_ast_trees.push(ok_tree);
+                            } else {
+                                println!("tree fix error: {}", r.unwrap_err());
+                                return ExitCode::from(1);
+                            }
+                        } else {
+                            println!("tree parse error: {}",raw_tree.unwrap_err());
+                            return ExitCode::from(1);
+                        }
+                    }
+                   
+                    println!("Syntaxing finished");
+                    return ExitCode::from(0);
                 }
             }
 
@@ -59,24 +109,3 @@ fn main() -> ExitCode{
     }
     return ExitCode::from(1);
 }
-
-fn main2() {
-    let code = "{int i;\n\twhile (true)\n\t\ti = i + 1;}";
-    let mut par = Lexer{root_env:symbol_table::Env::new(None)};
-    let result = par.custom_lexer(code).unwrap();
-    println!("{}", Lexer::renderer(result.clone()));
-    par.root_env.print_all();
-    
-    
-    let res = Parser::parse(result, par.root_env);
-
-    if res.is_err(){
-        println!("Error: {}",res.unwrap_err())
-    } else {
-        println!("Parsing Finished");
-        let controller = res.unwrap();
-        controller.render_node(0); // node index 0 is always root of tree
-    }
-
-}
-

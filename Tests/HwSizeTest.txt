@@ -1,0 +1,6 @@
+{
+    int i;
+    float j;
+    float[10] k;
+    float[10][50] l;
+}

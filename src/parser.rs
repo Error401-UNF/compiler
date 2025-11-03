@@ -1,20 +1,18 @@
 //parser.rs
 
+use std::cell::RefCell;
 use std::collections::{VecDeque};
-use std::fmt::format;
+use std::rc::Rc;
 
 use super::lexical_analyzer::{tokens};
 use super::symbol_table::{Env, Value};
 
-
-
-
 #[derive(Debug,Clone)]
 pub struct TreeNode {
-    parent: Option<usize>,
-    this_node: Option<usize>,
-    children: Vec<usize>,
-    rule:Rules,
+    pub parent: Option<usize>,
+    pub this_node: Option<usize>,
+    pub children: Vec<usize>,
+    pub rule:Rules,
     valuetype: Value
 }
 
@@ -43,9 +41,9 @@ impl TreeNode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct TreeControler {
-    tree_vector: Vec<TreeNode>
+    pub tree_vector: Vec<TreeNode>
 }
 
 impl TreeControler {
@@ -57,6 +55,10 @@ impl TreeControler {
     
     pub fn get(&mut self, node_index:usize) -> Option<&mut TreeNode>{
         return self.tree_vector.get_mut(node_index);
+    }
+
+    pub fn get_weak(&self, node_index:usize) -> Option<&TreeNode>{
+        return self.tree_vector.get(node_index);
     }
 
     pub fn put(&mut self, parent_index: usize, mut child:TreeNode) -> usize{
@@ -72,13 +74,14 @@ impl TreeControler {
         return child_position;
     }
 
-    pub fn render_node(&self, node_index:usize){
+    pub fn render_node(&self, node_index:usize, depth:usize){
+        let indent = "  |".repeat(depth);
         // render self
-        println!("{}",self.tree_vector[node_index].clone().render());
+        println!("{}{}",indent,self.tree_vector[node_index].rule.clone().render());
 
         // render children
         for child in self.tree_vector[node_index].clone().children{
-            Self::render_node(self, child);
+            Self::render_node(self, child,depth+1);
         }
     }
 
@@ -93,9 +96,11 @@ impl TreeControler {
 }
 
 #[derive(Debug,Clone,PartialEq,)]
-enum Rules{
+pub enum Rules{
     // Parser commands
     Jump(usize), // jumps counter n spaces
+    ExitEnviornment,
+    EnterEnviornment,
 
     // program rules
     ProgramToBlock,
@@ -133,6 +138,7 @@ enum Rules{
     EquationToObjectHeq,
     EquationToEncloseHeq,
     EquationToNegate,
+    EquationToNegCondition,
 
     //heq rules
     HeqMarker,
@@ -155,6 +161,7 @@ enum Rules{
     ConditionToObjectHcon,
     ConditionToEnclosedHcon,
     ConditionToNegate,
+    ConditionToNegEquation,
 
 
     // hcon rules
@@ -198,9 +205,10 @@ impl Rules {
 
             Rules::ExprToAssignEquation => { return "expr -> var = equation ;".to_string()},
 
-            Rules::EquationToEncloseHeq => { return "equation -> ( equation )".to_string()},
+            Rules::EquationToEncloseHeq => { return "equation -> ( equation ) heq".to_string()},
             Rules::EquationToObjectHeq => { return "equation -> object heq".to_string()},
             Rules::EquationToNegate => { return "equation -> - equation".to_string()},
+            Rules::EquationToNegCondition => { return "equation -> ! condition".to_string()},
 
             Rules::ObjectToVar => { return "object -> var".to_string()},
             Rules::ObjectToNum => { return "object -> num".to_string()},
@@ -208,9 +216,10 @@ impl Rules {
             Rules::ObjectToTrue => { return "object -> true".to_string()},
             Rules::ObjectToFalse => { return "object -> false".to_string()},
 
-            Rules::ConditionToEnclosedHcon => { return "condition -> ( condition )".to_string()},
-            Rules::ConditionToObjectHcon => { return "condition -> object".to_string()},
+            Rules::ConditionToEnclosedHcon => { return "condition -> ( condition ) hcon".to_string()},
+            Rules::ConditionToObjectHcon => { return "condition -> object hcon".to_string()},
             Rules::ConditionToNegate => { return "condition -> ! condition".to_string()},
+            Rules::ConditionToNegEquation => { return "condition -> - equation".to_string()},
 
             Rules::ElifToElse => { return "elif -> else stmt".to_string()},
             Rules::ElifToEpsilon => { return "elif -> ε".to_string()},
@@ -244,31 +253,76 @@ impl Rules {
             Rules::ElifMarker => { return "elif marker".to_string()},
             Rules::ArrMarker => { return "Arr marker".to_string()},
 
-            Rules::Terminal(_) => { return "".to_string()},
+            Rules::Terminal(t) => { return format!("Terminal: {}",t.clone().render())},
             Rules::Jump(d) => { return format!("Skip {} spaces", d )},
+            Rules::EnterEnviornment => { return "Entered Enviornment".to_string()},
+            Rules::ExitEnviornment => { return "Exited Enviornment".to_string()},
 
             r => {return format!("Not Implemented {:?}", r);}
         }
     }
 }
 
+struct EnvControler {
+    pub root_env: Rc<Env>,
+    prev_env:Option<Rc<EnvControler>>,
+    env_count:RefCell<usize>,
+}
 
+impl EnvControler {
+    pub fn new_root(root_env: Rc<Env>) -> Rc<EnvControler> {
+        EnvControler {
+            root_env: root_env,
+            env_count: RefCell::new(0),
+            prev_env: None,
+        }.into()
+    }
+    fn next_env(this:&mut Rc<EnvControler>) -> Rc<EnvControler> {
+        let borrowed_list = this.root_env.children.borrow();
+        let mut current_index = this.env_count.borrow_mut();
+
+        if *current_index < borrowed_list.len().into(){
+            let next_child = &this.root_env.children.borrow()[*current_index];
+
+            *current_index += 1;
+
+            let next_root = next_child.upgrade().unwrap();
+            let new_controler = Self {
+                root_env: Rc::clone(&next_root),
+                prev_env: Some(Rc::clone(&this)),
+                env_count: RefCell::new(0),
+            };
+            return Rc::new(new_controler);
+        } else {
+            panic!("No Next Environment")
+        }
+    } 
+    fn prev_env(this:&mut Rc<EnvControler>) -> Rc<EnvControler> {
+        if let Some(parent) = &this.prev_env {
+            return Rc::clone(parent);
+        }
+        else {
+            panic!("No Prev Environment")
+        }
+    }
+}
 
 pub struct Parser{
-    
+    pub all_scopes: Vec<Rc<Env>>,
 }
 
 impl Parser {
-    pub fn parse(input: Vec<tokens>, table:Env) -> Result<TreeControler, String>{
+    pub fn parse(&self,input: Vec<tokens>, root_env: &Rc<Env>) -> Result<TreeControler, String>{
         let mut current_input_index:usize = 0;
         let mut tree = TreeControler::new();
         let mut current_rule = Rules::ProgramToBlock;
-        let mut current_rule_Node:usize = 0;
+        let mut current_rule_node:usize = 0;
         let mut rules_to_process: VecDeque<(Rules, usize)> = VecDeque::new(); // acting as a heap
+        let mut current_enviornment = EnvControler::new_root(root_env.clone());
 
 
         println!("Parsing started.");
-        println!("Currently executing rule {:?} whos parent is {} at index {}", current_rule.render(), current_rule_Node ,current_input_index);
+        //println!("{}", current_rule.render());
 
         while current_input_index <= input.len(){
 
@@ -279,21 +333,23 @@ impl Parser {
                     //rule only encountered in 2 sinarios. Start of program. or block that looks like this { block }
                     // either way it makes a block that looks like thiis { block } so only deal with that and error otherwise
                     
+                    // manage tree
+                    
                     
                     //make all blocks
-                    let start_enclose = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::StartEnclose), Value::Null);
-                    let stmt_block = TreeNode::child(current_rule_Node, Rules::BlockToStmtBlock, Value::Null); 
-                    let end_enclose = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::EndEnclose), Value::Null);
+                    let start_enclose = TreeNode::child(current_rule_node, Rules::Terminal(tokens::StartEnclose), Value::Null);
+                    let stmt_block = TreeNode::child(current_rule_node, Rules::BlockToStmtBlock, Value::Null); 
+                    let end_enclose = TreeNode::child(current_rule_node, Rules::Terminal(tokens::EndEnclose), Value::Null);
 
                     //inject into parent
-                    tree.put(current_rule_Node, start_enclose);
-                    let stmt_index = tree.put(current_rule_Node, stmt_block);
-                    tree.put(current_rule_Node, end_enclose);
+                    tree.put(current_rule_node, start_enclose);
+                    let stmt_index = tree.put(current_rule_node, stmt_block);
+                    tree.put(current_rule_node, end_enclose);
 
                     // push next rule
-                    rules_to_process.push_front((Rules::Jump(1), stmt_index));
-
+                    rules_to_process.push_front((Rules::ExitEnviornment, stmt_index));
                     rules_to_process.push_front((Rules::BlockToStmtBlock, stmt_index));
+                    rules_to_process.push_front((Rules::EnterEnviornment, stmt_index));
                     current_input_index += 1; // advance 1 token
                     break  'rule_check;
                 },
@@ -306,7 +362,7 @@ impl Parser {
 
 
                     // recurse. placed first so its exicuted after whatever is inside the statement.
-                    rules_to_process.push_front((Rules::BlockToStmtBlock, current_rule_Node));
+                    rules_to_process.push_front((Rules::BlockToStmtBlock, current_rule_node));
 
                     match &input[current_input_index] {
                         tokens::EndEnclose => {
@@ -314,24 +370,24 @@ impl Parser {
                             rules_to_process.pop_front();
 
                             // epsilon
-                            rules_to_process.push_front((Rules::BlockToEpsilon, current_rule_Node));
+                            rules_to_process.push_front((Rules::BlockToEpsilon, current_rule_node));
+                            current_input_index += 1; // advance 1 token
                             break 'outer; // break to outer match
                         }
 
                         // detect all types of statements
                         tokens::StartEnclose => 'inner: {
                             // { block }
-                            let stmt_block = TreeNode::child(current_rule_Node, Rules::StmtToBlock, Value::Null);
-                            let stmt_index = tree.put(current_rule_Node, stmt_block);
-                            rules_to_process.push_front((Rules::BlockToStmtBlock, stmt_index));
-                            current_input_index += 1; // advance 1 token
+                            let stmt_block = TreeNode::child(current_rule_node, Rules::StmtToBlock, Value::Null);
+                            let stmt_index = tree.put(current_rule_node, stmt_block);
+                            rules_to_process.push_front((Rules::StmtToBlock, stmt_index));
                             break 'inner;
                         }
 
                         tokens::Basic(v) => 'inner: {
                             // decl
-                            let decl_block = TreeNode::child(current_rule_Node, Rules::StmtToDecl, v.clone());
-                            let decl_index = tree.put(current_rule_Node, decl_block);
+                            let decl_block = TreeNode::child(current_rule_node, Rules::StmtToDecl, v.clone());
+                            let decl_index = tree.put(current_rule_node, decl_block);
                             
                             rules_to_process.push_front((Rules::StmtToDecl, decl_index));
                             break 'inner;
@@ -339,8 +395,8 @@ impl Parser {
 
                         tokens::Break => 'inner: {
                             // break ;
-                            let break_block = TreeNode::child(current_rule_Node, Rules::StmtToBreak,  Value::Null);
-                            let break_index = tree.put(current_rule_Node, break_block);
+                            let break_block = TreeNode::child(current_rule_node, Rules::StmtToBreak,  Value::Null);
+                            let break_index = tree.put(current_rule_node, break_block);
                             
                             rules_to_process.push_front((Rules::StmtToBreak, break_index));
                             break 'inner;
@@ -348,8 +404,8 @@ impl Parser {
 
                         tokens::While => 'inner: {
                             // while ( condition ) { block }
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToWhile,  Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToWhile,  Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
                             rules_to_process.push_front((Rules::StmtToWhile, index));
                             break 'inner;
@@ -357,8 +413,8 @@ impl Parser {
 
                         tokens::Do => 'inner: {
                             // do stmt while ( condition ) ;
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToDo, Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToDo, Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
                             rules_to_process.push_front((Rules::StmtToDo, index));
                             break 'inner;
@@ -366,8 +422,8 @@ impl Parser {
 
                         tokens::If => 'inner: {
                             // if ( condition ) stmt elif
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToIf, Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToIf, Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
                             rules_to_process.push_front((Rules::StmtToIf, index));
                             break 'inner;
@@ -375,8 +431,16 @@ impl Parser {
 
                         tokens::Id(v) => 'inner: {
                             // expr
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToExpr,table.get(v.to_string()).unwrap());
-                            let index = tree.put(current_rule_Node, block);
+                            let value = Env::get(&current_enviornment.root_env,v.to_string());
+                            let block: TreeNode;
+                            if value.is_some(){
+                                block = TreeNode::child(current_rule_node, Rules::StmtToExpr,value.unwrap());
+                            } else {
+                                println!("tree dump");
+                                Env::print_detailed_down(&current_enviornment.root_env, 0);
+                                return Err(format!("Id fetch failure for id {}",v));
+                            }
+                            let index = tree.put(current_rule_node, block);
                             
                             rules_to_process.push_front((Rules::StmtToExpr, index));
                             break 'inner;
@@ -403,70 +467,71 @@ impl Parser {
                         // detect all types of statements
                         tokens::StartEnclose => 'inner: {
                             // { block }
-                            let stmt_block = TreeNode::child(current_rule_Node, Rules::StmtToBlock, Value::Null);
-                            let stmt_index = tree.put(current_rule_Node, stmt_block);
+                            let stmt_block = TreeNode::child(current_rule_node, Rules::StmtToBlock, Value::Null);
+                            let stmt_index = tree.put(current_rule_node, stmt_block);
 
-                            tree.update_marker(current_rule_Node, Rules::StmtToBlock);
+                            tree.update_marker(current_rule_node, Rules::StmtToBlock);
                             rules_to_process.push_front((Rules::StmtToBlock, stmt_index));
                             break 'inner;
                         }
 
                         tokens::Basic(v) => 'inner: {
                             // decl
-                            let decl_block = TreeNode::child(current_rule_Node, Rules::StmtToDecl, v.clone());
-                            let decl_index = tree.put(current_rule_Node, decl_block);
+                            let decl_block = TreeNode::child(current_rule_node, Rules::StmtToDecl, v.clone());
+                            let decl_index = tree.put(current_rule_node, decl_block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToDecl);
+                            tree.update_marker(current_rule_node, Rules::StmtToDecl);
                             rules_to_process.push_front((Rules::StmtToDecl, decl_index));
                             break 'inner;
                         }
 
                         tokens::Break => 'inner: {
                             // break ;
-                            let break_block = TreeNode::child(current_rule_Node, Rules::StmtToBreak,  Value::Null);
-                            let break_index = tree.put(current_rule_Node, break_block);
+                            let break_block = TreeNode::child(current_rule_node, Rules::StmtToBreak,  Value::Null);
+                            let break_index = tree.put(current_rule_node, break_block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToBreak);
+                            tree.update_marker(current_rule_node, Rules::StmtToBreak);
                             rules_to_process.push_front((Rules::StmtToBreak, break_index));
                             break 'inner;
                         }
 
                         tokens::While => 'inner: {
                             // while ( condition ) { block }
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToWhile,  Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToWhile,  Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToWhile);
+                            tree.update_marker(current_rule_node, Rules::StmtToWhile);
                             rules_to_process.push_front((Rules::StmtToWhile, index));
                             break 'inner;
                         }
 
                         tokens::Do => 'inner: {
                             // do stmt while ( condition ) ;
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToDo, Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToDo, Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToDo);
+                            tree.update_marker(current_rule_node, Rules::StmtToDo);
                             rules_to_process.push_front((Rules::StmtToDo, index));
                             break 'inner;
                         }
 
                         tokens::If => 'inner: {
                             // if ( condition ) stmt elif
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToIf, Value::Null);
-                            let index = tree.put(current_rule_Node, block);
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToIf, Value::Null);
+                            let index = tree.put(current_rule_node, block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToIf);
+                            tree.update_marker(current_rule_node, Rules::StmtToIf);
                             rules_to_process.push_front((Rules::StmtToIf, index));
                             break 'inner;
                         }
 
                         tokens::Id(v) => 'inner: {
                             // expr
-                            let block = TreeNode::child(current_rule_Node, Rules::StmtToExpr,table.get(v.to_string()).unwrap());
-                            let index = tree.put(current_rule_Node, block);
+                            let value = Env::get(&current_enviornment.root_env,v.to_string());
+                            let block = TreeNode::child(current_rule_node, Rules::StmtToExpr,value.unwrap());
+                            let index = tree.put(current_rule_node, block);
                             
-                            tree.update_marker(current_rule_Node, Rules::StmtToExpr);
+                            tree.update_marker(current_rule_node, Rules::StmtToExpr);
                             rules_to_process.push_front((Rules::StmtToExpr, index));
                             break 'inner;
                         }
@@ -487,14 +552,14 @@ impl Parser {
                     // then deal with var
                     
                     // make blocks
-                    let basic = TreeNode::child(current_rule_Node, Rules::Terminal(input[current_input_index].clone()), Value::Null);
-                    let var = TreeNode::child(current_rule_Node, Rules::DeclToVar, Value::Null); 
-                    let stop = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Stop), Value::Null);
+                    let basic = TreeNode::child(current_rule_node, Rules::Terminal(input[current_input_index].clone()), Value::Null);
+                    let var = TreeNode::child(current_rule_node, Rules::DeclToVar, Value::Null); 
+                    let stop = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Stop), Value::Null);
 
                     //inject into parent
-                    tree.put(current_rule_Node, basic);
-                    let var_index = tree.put(current_rule_Node, var);
-                    tree.put(current_rule_Node, stop);
+                    tree.put(current_rule_node, basic);
+                    let var_index = tree.put(current_rule_node, var);
+                    tree.put(current_rule_node, stop);
 
 
                     // push next rule
@@ -506,10 +571,10 @@ impl Parser {
                     // apply stmt -> expr
                     
                     // make blocks
-                    let expr = TreeNode::child(current_rule_Node, Rules::ExprToAssignEquation, Value::Null); 
+                    let expr = TreeNode::child(current_rule_node, Rules::ExprToAssignEquation, Value::Null); 
 
                     //inject into parent
-                    let expr_index = tree.put(current_rule_Node, expr);
+                    let expr_index = tree.put(current_rule_node, expr);
 
 
                     // push next rule
@@ -520,12 +585,12 @@ impl Parser {
                 },
                 Rules::StmtToBreak =>  'rule_check: {
                     // make blocks
-                    let basic = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Break), Value::Null);
-                    let stop = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Stop), Value::Null);
+                    let basic = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Break), Value::Null);
+                    let stop = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Stop), Value::Null);
 
                     //inject into parent
-                    tree.put(current_rule_Node, basic);
-                    tree.put(current_rule_Node, stop);
+                    tree.put(current_rule_node, basic);
+                    tree.put(current_rule_node, stop);
 
 
                     // push next rule
@@ -539,22 +604,22 @@ impl Parser {
                     // specify this one because it goes last and is more general
 
                     // nonterminals
-                    let whil = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::While), Value::Null);
-                    let open = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Open), Value::Null);
-                    let close = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Close), Value::Null);
+                    let whil = TreeNode::child(current_rule_node, Rules::Terminal(tokens::While), Value::Null);
+                    let open = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Open), Value::Null);
+                    let close = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Close), Value::Null);
 
                     // condition
                     let next_cond = Self::detect_next_conditon_type(&input,current_input_index + 2);
-                    let cond = TreeNode::child(current_rule_Node, next_cond.clone(), Value::Null);
+                    let cond = TreeNode::child(current_rule_node, next_cond.clone(), Value::Null);
 
                     // add to tree
-                    tree.put(current_rule_Node, whil);
-                    tree.put(current_rule_Node, open);
-                    let condition = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, close);
+                    tree.put(current_rule_node, whil);
+                    tree.put(current_rule_node, open);
+                    let condition = tree.put(current_rule_node, cond);
+                    tree.put(current_rule_node, close);
 
                     // push next rule
-                    rules_to_process.push_front((Rules::StmtMarker, current_rule_Node));
+                    rules_to_process.push_front((Rules::StmtMarker, current_rule_node));
                     rules_to_process.push_front((Rules::Jump(1), condition)); // consume close )
                     rules_to_process.push_front((next_cond, condition));
                     
@@ -566,27 +631,27 @@ impl Parser {
                     // do stmt while ( condition ) ;
 
                     // build terminals
-                    let do_term = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Do), Value::Null);
-                    let while_term = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::While), Value::Null);
-                    let open = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Open), Value::Null);
-                    let close = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Close), Value::Null);
-                    let stop = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Stop), Value::Null);
+                    let do_term = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Do), Value::Null);
+                    let while_term = TreeNode::child(current_rule_node, Rules::Terminal(tokens::While), Value::Null);
+                    let open = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Open), Value::Null);
+                    let close = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Close), Value::Null);
+                    let stop = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Stop), Value::Null);
 
                     // build stmt
-                    let stmt = TreeNode::child(current_rule_Node, Rules::StmtMarker, Value::Null);
+                    let stmt = TreeNode::child(current_rule_node, Rules::StmtMarker, Value::Null);
 
                     // build condition
-                    let cond = TreeNode::child(current_rule_Node, Rules::ConditionMarker, Value::Null);
+                    let cond = TreeNode::child(current_rule_node, Rules::ConditionMarker, Value::Null);
 
 
                     // add to parent in the right order
-                    tree.put(current_rule_Node, do_term);
-                    let stmt_index = tree.put(current_rule_Node, stmt);
-                    tree.put(current_rule_Node, while_term);
-                    tree.put(current_rule_Node, open);
-                    let cond_index = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, close);
-                    tree.put(current_rule_Node, stop);
+                    tree.put(current_rule_node, do_term);
+                    let stmt_index = tree.put(current_rule_node, stmt);
+                    tree.put(current_rule_node, while_term);
+                    tree.put(current_rule_node, open);
+                    let cond_index = tree.put(current_rule_node, cond);
+                    tree.put(current_rule_node, close);
+                    tree.put(current_rule_node, stop);
 
 
                     // oddities here being the ; after condition. condition doesnt have a way to deal with that so we jump past it
@@ -605,24 +670,24 @@ impl Parser {
                 Rules::StmtToIf => 'rule_check: {
                     // if ( condition ) stmt elif
                     // make all terminals
-                    let if_term = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::If), Value::Null);
-                    let open = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Open), Value::Null);
-                    let close = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Close), Value::Null);
+                    let if_term = TreeNode::child(current_rule_node, Rules::Terminal(tokens::If), Value::Null);
+                    let open = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Open), Value::Null);
+                    let close = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Close), Value::Null);
 
 
                     // make all non terminals
-                    let cond = TreeNode::child(current_rule_Node, Rules::ConditionMarker, Value::Null);
-                    let stmt = TreeNode::child(current_rule_Node, Rules::StmtMarker, Value::Null);
-                    let elif = TreeNode::child(current_rule_Node, Rules::ElifMarker, Value::Null);
+                    let cond = TreeNode::child(current_rule_node, Rules::ConditionMarker, Value::Null);
+                    let stmt = TreeNode::child(current_rule_node, Rules::StmtMarker, Value::Null);
+                    let elif = TreeNode::child(current_rule_node, Rules::ElifMarker, Value::Null);
 
 
                     // add nodes in order to parent
-                    tree.put(current_rule_Node, if_term);
-                    tree.put(current_rule_Node, open);
-                    let cond_index = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, close);
-                    let stmt_index = tree.put(current_rule_Node, stmt);
-                    let elif_index = tree.put(current_rule_Node, elif);
+                    tree.put(current_rule_node, if_term);
+                    tree.put(current_rule_node, open);
+                    let cond_index = tree.put(current_rule_node, cond);
+                    tree.put(current_rule_node, close);
+                    let stmt_index = tree.put(current_rule_node, stmt);
+                    let elif_index = tree.put(current_rule_node, elif);
 
                     // add elif then stmt then condition into the stack
                     rules_to_process.push_front((Rules::ElifMarker, elif_index));
@@ -647,19 +712,19 @@ impl Parser {
                             return Err(format!("no basic found"));
                         } 
                     }
-                    let basic = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Basic(basic_type)), Value::Null);
-                    let stop = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Stop), Value::Null);
-                    tree.put(current_rule_Node, basic) ;
+                    let basic = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Basic(basic_type)), Value::Null);
+                    let stop = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Stop), Value::Null);
+                    tree.put(current_rule_node, basic) ;
 
                     // see if there is any arry there
                     if let &tokens::ArrayEquationStart = &input[current_input_index+1] {
                         // there is an array here
                         // set up markers and deal with arr
-                        let arr = TreeNode::child(current_rule_Node, Rules::ArrToArrayArr, Value::Null);
-                        let var = TreeNode::child(current_rule_Node, Rules::VarToIDArr, Value::Null);
+                        let arr = TreeNode::child(current_rule_node, Rules::ArrToArrayArr, Value::Null);
+                        let var = TreeNode::child(current_rule_node, Rules::VarToIDArr, Value::Null);
 
-                        let arr_index = tree.put(current_rule_Node, arr);
-                        let var_index = tree.put(current_rule_Node, var);
+                        let arr_index = tree.put(current_rule_node, arr);
+                        let var_index = tree.put(current_rule_node, var);
                         
                         // push in reverse order
                         rules_to_process.push_front((Rules::Jump(1), var_index));
@@ -668,14 +733,14 @@ impl Parser {
                     }
                     else {
                         // no array here :3
-                        let arr = TreeNode::child(current_rule_Node, Rules::ArrToEpsilon, Value::Null);
-                        let arr_index = tree.put(current_rule_Node, arr);
+                        let arr = TreeNode::child(current_rule_node, Rules::ArrToEpsilon, Value::Null);
+                        let arr_index = tree.put(current_rule_node, arr);
                         let epsilon = TreeNode::child(arr_index, Rules::Terminal(tokens::Null), Value::Null);
                         tree.put(arr_index, epsilon);
 
                         // send var to be delt with by something else lmao
-                        let var = TreeNode::child(current_rule_Node, Rules::VarToIDArr, Value::Null);
-                        let var_index = tree.put(current_rule_Node, var);
+                        let var = TreeNode::child(current_rule_node, Rules::VarToIDArr, Value::Null);
+                        let var_index = tree.put(current_rule_node, var);
                         
                         // push to stack
                         rules_to_process.push_front((Rules::Jump(1), var_index));
@@ -684,7 +749,7 @@ impl Parser {
 
                     // always end with pushing stop
                     current_input_index += 1; // move passed basic into arr or var
-                    tree.put(current_rule_Node, stop);
+                    tree.put(current_rule_node, stop);
                     break  'rule_check;
                 },
 
@@ -692,12 +757,12 @@ impl Parser {
                     // detect type if there be an array here or not
                     if let &tokens::ArrayEquationStart = &input[current_input_index]{
                         // yep
-                        tree.update_marker(current_rule_Node, Rules::ArrToArrayArr);
-                        rules_to_process.push_front((Rules::ArrToArrayArr,current_rule_Node));
+                        tree.update_marker(current_rule_node, Rules::ArrToArrayArr);
+                        rules_to_process.push_front((Rules::ArrToArrayArr,current_rule_node));
                     } else {
                         //nope
-                        tree.update_marker(current_rule_Node, Rules::ArrToEpsilon);
-                        rules_to_process.push_front((Rules::ArrToEpsilon,current_rule_Node));
+                        tree.update_marker(current_rule_node, Rules::ArrToEpsilon);
+                        rules_to_process.push_front((Rules::ArrToEpsilon,current_rule_node));
 
                     }
                     break 'rule_check;
@@ -707,21 +772,21 @@ impl Parser {
                     // [ num ] arr
                     
                     // set up terminals
-                    let arr_start = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::ArrayEquationStart), Value::Null);
-                    let arr_end = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::ArrayEquationEnd), Value::Null);
+                    let arr_start = TreeNode::child(current_rule_node, Rules::Terminal(tokens::ArrayEquationStart), Value::Null);
+                    let arr_end = TreeNode::child(current_rule_node, Rules::Terminal(tokens::ArrayEquationEnd), Value::Null);
 
                     // deal with condition
                     let cond_type = Self::detect_next_conditon_type(&input, current_input_index+1);
-                    let cond = TreeNode::child(current_rule_Node, cond_type.clone(), Value::Null);
+                    let cond = TreeNode::child(current_rule_node, cond_type.clone(), Value::Null);
 
                     // deal with arr
-                    let arr = TreeNode::child(current_rule_Node, Rules::ArrMarker, Value::Null);
+                    let arr = TreeNode::child(current_rule_node, Rules::ArrMarker, Value::Null);
 
                     // inject in correct order
-                    tree.put(current_rule_Node, arr_start);
-                    let cond_index = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, arr_end);
-                    let arr_index = tree.put(current_rule_Node, arr);
+                    tree.put(current_rule_node, arr_start);
+                    let cond_index = tree.put(current_rule_node, cond);
+                    tree.put(current_rule_node, arr_end);
+                    let arr_index = tree.put(current_rule_node, arr);
 
                     // put rules into tree in reverse order
                     rules_to_process.push_front((Rules::ArrMarker, arr_index));
@@ -736,24 +801,24 @@ impl Parser {
                     // var -> id arr
                     
                     // take care of id
-                    let id: TreeNode = TreeNode::child(current_rule_Node, Rules::Terminal(input[current_input_index].clone()), Value::Null);
+                    let id: TreeNode = TreeNode::child(current_rule_node, Rules::Terminal(input[current_input_index].clone()), Value::Null);
 
                     let arr:TreeNode;
                     let arr_type:Rules;
                     // detect type of arr
                     if let &tokens::ArrayEquationStart = &input[current_input_index+1] {
                         // array
-                        arr = TreeNode::child(current_rule_Node, Rules::ArrToArrayArr, Value::Null);
+                        arr = TreeNode::child(current_rule_node, Rules::ArrToArrayArr, Value::Null);
                         arr_type = Rules::ArrToArrayArr;
                     } else {
                         // not array
-                        arr = TreeNode::child(current_rule_Node, Rules::ArrToEpsilon, Value::Null);
+                        arr = TreeNode::child(current_rule_node, Rules::ArrToEpsilon, Value::Null);
                         arr_type = Rules::ArrToEpsilon;
                     }
                     
                     // inject
-                    tree.put(current_rule_Node, id);
-                    let arr_index = tree.put(current_rule_Node, arr.clone());
+                    tree.put(current_rule_node, id);
+                    let arr_index = tree.put(current_rule_node, arr.clone());
                     rules_to_process.push_front((arr_type, arr_index));
                     
                     current_input_index += 1; // move passed id
@@ -765,22 +830,22 @@ impl Parser {
                     // apply expr -> var = equation ;
 
                     // set up var
-                    let var = TreeNode::child(current_rule_Node,Rules::VarToIDArr, Value::Null);
-                    let var_index = tree.put(current_rule_Node, var);
+                    let var = TreeNode::child(current_rule_node,Rules::VarToIDArr, Value::Null);
+                    let var_index = tree.put(current_rule_node, var);
 
                     // maker terminals
-                    let equals = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Assigns), Value::Null); 
-                    let stop = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Stop), Value::Null); 
+                    let equals = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Assigns), Value::Null); 
+                    let stop = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Stop), Value::Null); 
 
                     //inject equals
-                    tree.put(current_rule_Node, equals);
+                    tree.put(current_rule_node, equals);
 
                     // detect and inject eq type 
-                    let eq_node = TreeNode::child(current_rule_Node, Rules::EquationMarker, Value::Null); 
-                    let eq_index =tree.put(current_rule_Node, eq_node);
+                    let eq_node = TreeNode::child(current_rule_node, Rules::EquationMarker, Value::Null); 
+                    let eq_index =tree.put(current_rule_node, eq_node);
 
                     // inject stop
-                    tree.put(current_rule_Node, stop);
+                    tree.put(current_rule_node, stop);
 
 
                     // push equation
@@ -795,21 +860,21 @@ impl Parser {
                 Rules::EquationMarker => 'rule_check: { 
                     // detect type of equation and move on to that
                     let eq = Self::detect_next_equation_type(&input, current_input_index);
-                    tree.update_marker(current_rule_Node, eq.clone());
+                    tree.update_marker(current_rule_node, eq.clone());
 
-                    rules_to_process.push_front((eq,current_rule_Node));
+                    rules_to_process.push_front((eq,current_rule_node));
 
                     break 'rule_check;
                 }
 
-                Rules::EquationToNegate => 'rule_check: {
+                Rules::EquationToNegate | Rules::ConditionToNegEquation => 'rule_check: {
                     // detect type of equation and move on to that
-                    let negation = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Minus), Value::Null);
+                    let negation = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Minus), Value::Null);
 
                     let eq = Self::detect_next_equation_type(&input, current_input_index+1);
-                    let next_eq = TreeNode::child(current_rule_Node, eq.clone(), Value::Null);
-                    tree.put(current_rule_Node, negation);
-                    let eq_index = tree.put(current_rule_Node, next_eq);
+                    let next_eq = TreeNode::child(current_rule_node, eq.clone(), Value::Null);
+                    tree.put(current_rule_node, negation);
+                    let eq_index = tree.put(current_rule_node, next_eq);
 
                     rules_to_process.push_front((eq, eq_index));
                     current_input_index +=1;
@@ -818,30 +883,31 @@ impl Parser {
                 }
 
                 Rules::EquationToEncloseHeq =>  'rule_check:{
-                    // ( condition ) heq
+                    // ( equation ) heq
 
                     //make all terminalblocks
-                    let start_pren = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Open), Value::Null);
-                    let end_pren = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Close), Value::Null);
+                    let start_pren = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Open), Value::Null);
+                    let end_pren = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Close), Value::Null);
 
 
                     
-                    // detrermin condition type
-                    let con_type = Self::detect_next_conditon_type(&input, current_input_index+1); //+1 added to get inside the ()
-                    let cond = TreeNode::child(current_rule_Node, con_type.clone(), Value::Null);
+                    // detrermin equation type
+                    let eq_type = Self::detect_next_equation_type(&input, current_input_index+1); //+1 added to get inside the ()
+                    let eq = TreeNode::child(current_rule_node, eq_type.clone(), Value::Null);
 
-                    let heq = TreeNode::child(current_rule_Node, Rules::HeqMarker, Value::Null);
+                    let heq = TreeNode::child(current_rule_node, Rules::HeqMarker, Value::Null);
 
                     //inject into parent
-                    tree.put(current_rule_Node, start_pren);
-                    let cond_index = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, end_pren);
-                    let heq_index = tree.put(current_rule_Node, heq);
+                    tree.put(current_rule_node, start_pren);
+                    let cond_index = tree.put(current_rule_node, eq);
+                    tree.put(current_rule_node, end_pren);
+                    let heq_index = tree.put(current_rule_node, heq);
 
                     
                     // push next rules
                     rules_to_process.push_front((Rules::HeqMarker, heq_index));
-                    rules_to_process.push_front((con_type, cond_index));
+                    rules_to_process.push_front((Rules::Jump(1), heq_index));
+                    rules_to_process.push_front((eq_type, cond_index));
                     current_input_index += 1; // advance 1 token into the block
                     break 'rule_check;
 
@@ -850,11 +916,11 @@ impl Parser {
                 Rules::EquationToObjectHeq =>  'rule_check: {
                     // object heq
                     let obj_type = Self::detect_next_object_type(&input, current_input_index);
-                    let object = TreeNode::child(current_rule_Node, obj_type.clone(), Value::Null);
-                    let object_index = tree.put(current_rule_Node, object);
+                    let object = TreeNode::child(current_rule_node, obj_type.clone(), Value::Null);
+                    let object_index = tree.put(current_rule_node, object);
                     
-                    let heq = TreeNode::child(current_rule_Node, Rules::HeqMarker, Value::Null);
-                    let heq_index = tree.put(current_rule_Node, heq);
+                    let heq = TreeNode::child(current_rule_node, Rules::HeqMarker, Value::Null);
+                    let heq_index = tree.put(current_rule_node, heq);
                     
                     rules_to_process.push_front((Rules::HeqMarker, heq_index));
                     rules_to_process.push_front((obj_type,object_index));
@@ -870,27 +936,27 @@ impl Parser {
                         let hcon_type = Self::detect_hcon_type(&input, current_input_index);
                         if let Rules::HconToEpsilon = hcon_type {
                             // there really isnt anything here
-                            rules_to_process.push_front((heq_type.clone(), current_rule_Node));
-                            tree.update_marker(current_rule_Node, heq_type);
+                            rules_to_process.push_front((heq_type.clone(), current_rule_node));
+                            tree.update_marker(current_rule_node, heq_type);
                             break  'rule_check;
                         }
                         else {
                             // its an hcon actually
-                            rules_to_process.push_front((Rules::HeqToHcon, current_rule_Node));
-                            tree.update_marker(current_rule_Node, Rules::HeqToHcon);
+                            rules_to_process.push_front((Rules::HeqToHcon, current_rule_node));
+                            tree.update_marker(current_rule_node, Rules::HeqToHcon);
                             break  'rule_check;
 
                         }
                     } else {
-                        rules_to_process.push_front((heq_type.clone(), current_rule_Node));
-                        tree.update_marker(current_rule_Node, heq_type);
+                        rules_to_process.push_front((heq_type.clone(), current_rule_node));
+                        tree.update_marker(current_rule_node, heq_type);
                         break  'rule_check;
                     }
                 }
                 
                 Rules::HeqToHcon => 'rule_check: {
-                    let hcon = TreeNode::child(current_rule_Node, Rules::HconMarker, Value::Null);
-                    let hcon_ind = tree.put(current_rule_Node, hcon);
+                    let hcon = TreeNode::child(current_rule_node, Rules::HconMarker, Value::Null);
+                    let hcon_ind = tree.put(current_rule_node, hcon);
                     rules_to_process.push_front((Rules::HconMarker, hcon_ind));
                     break 'rule_check;
                 }
@@ -900,16 +966,16 @@ impl Parser {
                     let opperator:TreeNode;
                     match current_rule {
                         Rules::HeqToAdd => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Plus), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Plus), Value::Null); 
                         }
                         Rules::HeqToSubtract => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Minus), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Minus), Value::Null); 
                         }
                         Rules::HeqToMultiply => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Times), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Times), Value::Null); 
                         }
                         Rules::HeqToDevide => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Devides), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Devides), Value::Null); 
                         }
                         _ =>{
                             // cant be nothing bc you have to go through marker to get here
@@ -918,12 +984,12 @@ impl Parser {
                     }
 
                     // connect opperator
-                    tree.put(current_rule_Node, opperator);
+                    tree.put(current_rule_node, opperator);
                     
                     // find next type 
                     let next_type = Self::detect_next_equation_type(&input, current_input_index+1);
-                    let next_equation = TreeNode::child(current_rule_Node, next_type.clone(), Value::Null);
-                    let equation_id = tree.put(current_rule_Node, next_equation);
+                    let next_equation = TreeNode::child(current_rule_node, next_type.clone(), Value::Null);
+                    let equation_id = tree.put(current_rule_node, next_equation);
 
                     rules_to_process.push_front((next_type, equation_id)); 
                     
@@ -936,19 +1002,19 @@ impl Parser {
                 Rules::ConditionMarker => 'rule_check:{
                     //catch type of condition and then exicute it.
                     let next_cond = Self::detect_next_conditon_type(&input, current_input_index);
-                    tree.update_marker(current_rule_Node, next_cond.clone());
-                    rules_to_process.push_front((next_cond,current_rule_Node)); // go do it :3
+                    tree.update_marker(current_rule_node, next_cond.clone());
+                    rules_to_process.push_front((next_cond,current_rule_node)); // go do it :3
                     break 'rule_check;
                 },
 
-                Rules::ConditionToNegate => 'rule_check: {
+                Rules::ConditionToNegate | Rules::EquationToNegCondition=> 'rule_check: {
                     // detect type of equation and move on to that
-                    let not = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Not), Value::Null);
+                    let not = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Not), Value::Null);
 
                     let cond = Self::detect_next_conditon_type(&input, current_input_index+1);
-                    let next_cond = TreeNode::child(current_rule_Node, cond.clone(), Value::Null);
-                    tree.put(current_rule_Node, not);
-                    let cond_index = tree.put(current_rule_Node, next_cond);
+                    let next_cond = TreeNode::child(current_rule_node, cond.clone(), Value::Null);
+                    tree.put(current_rule_node, not);
+                    let cond_index = tree.put(current_rule_node, next_cond);
                     
                     rules_to_process.push_front((cond, cond_index));
                     current_input_index +=1;
@@ -960,22 +1026,22 @@ impl Parser {
                     // ( condition ) hcon
 
                     //make all terminalblocks
-                    let start_pren = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Open), Value::Null);
-                    let end_pren = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Close), Value::Null);
+                    let start_pren = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Open), Value::Null);
+                    let end_pren = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Close), Value::Null);
 
 
                     
                     // detrermin condition type
                     let con_type = Self::detect_next_conditon_type(&input, current_input_index+1); //+1 added to get inside the ()
-                    let cond = TreeNode::child(current_rule_Node, con_type.clone(), Value::Null);
+                    let cond = TreeNode::child(current_rule_node, con_type.clone(), Value::Null);
 
-                    let hcon = TreeNode::child(current_rule_Node, Rules::HconMarker, Value::Null);
+                    let hcon = TreeNode::child(current_rule_node, Rules::HconMarker, Value::Null);
 
                     //inject into parent
-                    tree.put(current_rule_Node, start_pren);
-                    let cond_index = tree.put(current_rule_Node, cond);
-                    tree.put(current_rule_Node, end_pren);
-                    let hcon_index = tree.put(current_rule_Node, hcon);
+                    tree.put(current_rule_node, start_pren);
+                    let cond_index = tree.put(current_rule_node, cond);
+                    tree.put(current_rule_node, end_pren);
+                    let hcon_index = tree.put(current_rule_node, hcon);
 
                     
                     // push next rules
@@ -991,11 +1057,11 @@ impl Parser {
                     // object hcon
                     
                     let obj_type = Self::detect_next_object_type(&input, current_input_index);
-                    let object = TreeNode::child(current_rule_Node, obj_type.clone(), Value::Null);
-                    let object_index = tree.put(current_rule_Node, object);
+                    let object = TreeNode::child(current_rule_node, obj_type.clone(), Value::Null);
+                    let object_index = tree.put(current_rule_node, object);
                     
-                    let hcon = TreeNode::child(current_rule_Node, Rules::HconMarker, Value::Null);
-                    let hcon_index = tree.put(current_rule_Node, hcon);
+                    let hcon = TreeNode::child(current_rule_node, Rules::HconMarker, Value::Null);
+                    let hcon_index = tree.put(current_rule_node, hcon);
                     
                     rules_to_process.push_front((Rules::HconMarker, hcon_index));
                     rules_to_process.push_front((obj_type,object_index));
@@ -1006,21 +1072,17 @@ impl Parser {
                 Rules::ObjectToVar => {
                     // object-> var
                     // object as parent
-                    let var = TreeNode::child(current_rule_Node, Rules::VarToIDArr, Value::Null); 
-                    let var_index = tree.put(current_rule_Node, var);
+                    let var = TreeNode::child(current_rule_node, Rules::VarToIDArr, Value::Null); 
+                    let var_index = tree.put(current_rule_node, var);
                     rules_to_process.push_front((Rules::VarToIDArr,var_index));
 
                 }
                 
                 Rules::ObjectToNum | Rules::ObjectToReal | Rules::ObjectToTrue |Rules::ObjectToFalse => {
-                    let obj_type = current_rule.clone();
+                    // object-> teminial
 
-
-                    let object = TreeNode::child(current_rule_Node, obj_type, Value::Null);
-                    let object_index = tree.put(current_rule_Node, object);
-
-                    let terminal = TreeNode::child(object_index, Rules::Terminal(input[current_input_index].clone()), Value::Null); 
-                    tree.put(object_index, terminal);
+                    let terminal = TreeNode::child(current_rule_node, Rules::Terminal(input[current_input_index].clone()), Value::Null); 
+                    tree.put(current_rule_node, terminal);
                     current_input_index +=1; // move passed terminal
                 }
 
@@ -1032,27 +1094,27 @@ impl Parser {
                         let heq_type = Self::detect_heq_type(&input, current_input_index);
                         if let Rules::HeqToEpsilon = heq_type {
                             // there really isnt anything here
-                            rules_to_process.push_front((hcon_type.clone(), current_rule_Node));
-                            tree.update_marker(current_rule_Node, hcon_type);
+                            rules_to_process.push_front((hcon_type.clone(), current_rule_node));
+                            tree.update_marker(current_rule_node, hcon_type);
                             break  'rule_check;
                         }
                         else {
                             // its an heq actually
-                            rules_to_process.push_front((Rules::HconToHeq, current_rule_Node));
-                            tree.update_marker(current_rule_Node, Rules::HconToHeq);
+                            rules_to_process.push_front((Rules::HconToHeq, current_rule_node));
+                            tree.update_marker(current_rule_node, Rules::HconToHeq);
                             break  'rule_check;
 
                         }
                     } else {
-                        rules_to_process.push_front((hcon_type.clone(), current_rule_Node));
-                        tree.update_marker(current_rule_Node, hcon_type);
+                        rules_to_process.push_front((hcon_type.clone(), current_rule_node));
+                        tree.update_marker(current_rule_node, hcon_type);
                         break  'rule_check;
                     }
                 }
 
                 Rules::HconToHeq => 'rule_check: {
-                    let heq = TreeNode::child(current_rule_Node, Rules::HeqMarker, Value::Null);
-                    let heq_ind = tree.put(current_rule_Node, heq);
+                    let heq = TreeNode::child(current_rule_node, Rules::HeqMarker, Value::Null);
+                    let heq_ind = tree.put(current_rule_node, heq);
                     rules_to_process.push_front((Rules::HeqMarker, heq_ind));
                     break 'rule_check;
                 }
@@ -1063,28 +1125,28 @@ impl Parser {
                     let opperator:TreeNode;
                     match current_rule {
                         Rules::HconToEquals => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Equals), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Equals), Value::Null); 
                         }
                         Rules::HconToNoteq => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Equals), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Equals), Value::Null); 
                         }
                         Rules::HconToLess => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Les), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Les), Value::Null); 
                         }
                         Rules::HconToLessEq => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Leq), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Leq), Value::Null); 
                         }
                         Rules::HconToMore => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Gre), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Gre), Value::Null); 
                         }
                         Rules::HconToMoreEq => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Geq), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Geq), Value::Null); 
                         }
                         Rules::HconToAnd => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::And), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::And), Value::Null); 
                         }
                         Rules::HconToOr => {
-                            opperator = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Or), Value::Null); 
+                            opperator = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Or), Value::Null); 
                         }
                         _ =>{
                             panic!()
@@ -1092,12 +1154,12 @@ impl Parser {
                     }
 
                     // connect opperator
-                    tree.put(current_rule_Node, opperator);
+                    tree.put(current_rule_node, opperator);
                     
                     // find next type 
                     let next_type = Self::detect_next_conditon_type(&input, current_input_index+1); // start detecting after current opperator
-                    let next_equation = TreeNode::child(current_rule_Node, next_type.clone(), Value::Null);
-                    let equation_id = tree.put(current_rule_Node, next_equation);
+                    let next_equation = TreeNode::child(current_rule_node, next_type.clone(), Value::Null);
+                    let equation_id = tree.put(current_rule_node, next_equation);
 
                     rules_to_process.push_front((next_type, equation_id));
                     
@@ -1112,12 +1174,12 @@ impl Parser {
                     // 1 determine if there is an else
                     if input[current_input_index] == tokens::Else {
                         // well. Theres an else it seams
-                        rules_to_process.push_front((Rules::ElifToElse,current_rule_Node)); // go do it :3
-                        tree.update_marker(current_rule_Node, Rules::ElifToElse);
+                        rules_to_process.push_front((Rules::ElifToElse,current_rule_node)); // go do it :3
+                        tree.update_marker(current_rule_node, Rules::ElifToElse);
                     } else {
                         // guesss its nothing
-                        rules_to_process.push_front((Rules::ElifToEpsilon,current_rule_Node));
-                        tree.update_marker(current_rule_Node, Rules::ElifToEpsilon);
+                        rules_to_process.push_front((Rules::ElifToEpsilon,current_rule_node));
+                        tree.update_marker(current_rule_node, Rules::ElifToEpsilon);
                     }
                     break 'rule_check;
                 },
@@ -1126,11 +1188,11 @@ impl Parser {
                     // else stmt
                     
                     // add in terminal else and then go to stmt block
-                    let els = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Else), Value::Null); 
-                    tree.put(current_rule_Node, els);
+                    let els = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Else), Value::Null); 
+                    tree.put(current_rule_node, els);
 
                     // stmt
-                    rules_to_process.push_front((Rules::StmtMarker, current_rule_Node));
+                    rules_to_process.push_front((Rules::StmtMarker, current_rule_node));
 
                     current_input_index += 1; // advance 1 token
                     break 'rule_check;
@@ -1141,8 +1203,8 @@ impl Parser {
                     // add in the terminal epsilon
                     // only happens when encountered } in block to statement block
                     // dont do anything just go past
-                    let epsilon = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Null), Value::Null); 
-                    tree.put(current_rule_Node, epsilon);
+                    let epsilon = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Null), Value::Null); 
+                    tree.put(current_rule_node, epsilon);
 
                     break 'rule_check;
                 },
@@ -1151,8 +1213,8 @@ impl Parser {
                     // add in the terminal epsilon
                     // only happens when if statement has ended. no clue what could be next so dont do anything
                     // dont do anything just go past
-                    let epsilon = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Null), Value::Null); 
-                    tree.put(current_rule_Node, epsilon);
+                    let epsilon = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Null), Value::Null); 
+                    tree.put(current_rule_node, epsilon);
 
                     // do not advance any tokens
                     break 'rule_check;
@@ -1160,20 +1222,21 @@ impl Parser {
 
                 Rules::HeqToEpsilon | Rules::HconToEpsilon => 'rule_check: {
                     // nothings here and dont do anything catch put in epsilon and move on
-                    let epsilon = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Null), Value::Null); 
-                    tree.put(current_rule_Node, epsilon);
+                    let epsilon = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Null), Value::Null); 
+                    tree.put(current_rule_node, epsilon);
 
                     break 'rule_check;
                 }
 
                 Rules::ArrToEpsilon => 'rule_check: {
                     // nothings here and dont do anything catch put in epsilon and move on
-                    let epsilon = TreeNode::child(current_rule_Node, Rules::Terminal(tokens::Null), Value::Null); 
-                    tree.put(current_rule_Node, epsilon);
+                    let epsilon = TreeNode::child(current_rule_node, Rules::Terminal(tokens::Null), Value::Null); 
+                    tree.put(current_rule_node, epsilon);
 
                     break 'rule_check;
                 }
 
+                // parser rules
                 Rules::Jump(n) => 'rule_check: {
                     // dev only
                     let mut skiped_tokens: Vec<tokens> = vec![];
@@ -1182,10 +1245,18 @@ impl Parser {
                             skiped_tokens.push(t.clone());
                         }
                     }
-                    
-
-                    println!("Skipping the following tokens {:?}", skiped_tokens);
+                    //println!("Skipping the following tokens {:?}", skiped_tokens);
                     current_input_index += n;
+                    break 'rule_check;
+                }
+
+                Rules::EnterEnviornment => 'rule_check: {
+                    current_enviornment = EnvControler::next_env(&mut current_enviornment);
+                    break 'rule_check;
+                }
+
+                Rules::ExitEnviornment => 'rule_check: {
+                    current_enviornment = EnvControler::prev_env(&mut current_enviornment);
                     break 'rule_check;
                 }
 
@@ -1200,20 +1271,22 @@ impl Parser {
             if !rules_to_process.is_empty() {
                 let next= rules_to_process.pop_front().unwrap();
                 current_rule = next.0;
-                current_rule_Node = next.1;
+                current_rule_node = next.1;
 
-                let current_rule_parent = tree.get(current_rule_Node).unwrap().parent.unwrap();
+                //let current_rule_parent = tree.get(current_rule_node).unwrap().parent.unwrap();
                 //let current_rule_parent = 0;
                 // print the current command for debug purposes
-                println!("Currently executing rule {:?} whos parent rule is {:?} at index {}", current_rule.render(), tree.get(current_rule_parent).unwrap().rule.render() ,current_input_index);
+                //println!("Currently executing rule {:?} whos parent rule is {:?} at index {}", current_rule.render(), tree.get(current_rule_parent).unwrap().rule.render() ,current_input_index);
                 // normal print command
-                //println!("{:?}", current_rule.render());
+                //println!("{}", current_rule.render());
                 
             }
             else if current_input_index < input.len() {
                 // ran out of rules and not tokens
                 println!("Ran out of rules. {:?} with rule list {:?} at index {}", current_rule, rules_to_process, current_input_index);
                 return Err(format!("no more rules at index: {} and token: {:?}",current_input_index,input[current_input_index]));
+            } else {
+                break;
             }
         }
         return Ok(tree);
@@ -1224,6 +1297,8 @@ impl Parser {
             return Rules::EquationToEncloseHeq;
         } else if let tokens::Minus = input[offset]  {
             return Rules::EquationToNegate;
+        } else if let tokens::Not = input[offset] {
+            return Rules::EquationToNegCondition;
         }
         return Rules::EquationToObjectHeq;
     }
@@ -1319,60 +1394,30 @@ impl Parser {
             return Rules::ConditionToEnclosedHcon;
         } else if let tokens::Not = input[offset]  {
             return Rules::ConditionToNegate;
+        }else if let tokens::Minus = input[offset]  {
+            return Rules::ConditionToNegEquation;
         }
         return Rules::ConditionToObjectHcon;
     }
 }
 
+/* hw
+StartEnclose, Basic(AnyFloat), ArrayEquationStart, Number(5), ArrayEquationEnd, 
 
-
-
-
-use super::lexical_analyzer::{Lexer};
-
-
-#[test]
-pub fn test_parser() {
-    let code = "{int i;\n\twhile (true)\n\t\ti = i + 1;}";
-    let mut par = Lexer{root_env:Env::new(None)};
-    let result = par.custom_lexer(code).unwrap();
-    println!("{}", Lexer::renderer(result.clone()));
-    par.root_env.detailed_print_all();
-    
-    
-    let res = Parser::parse(result, par.root_env);
-
-    if res.is_err(){
-        println!("Error: {}",res.unwrap_err())
-    } else {
-        println!("Parsing Finished");
-        //println!("{:?}",res.unwrap());
-    }
-}
-
-/* 3
-StartEnclose, Basic(AnyInt), Id("x"), Stop, Basic(AnyInt), 
-
-Id("y"), Stop, Id("x"), Assigns, Number(1), 
+ArrayEquationStart, Number(7), ArrayEquationEnd, Id("i"), Stop, 
 
 10
-Stop, Id("y"), Assigns, Number(5), Stop, 
+Basic(AnyInt), Id("j"), Stop, Basic(AnyInt), ArrayEquationStart, 
 
-While, Open, Id("x"), Leq, Number(5), 
+Number(3), ArrayEquationEnd, Id("k"), Stop, StartEnclose, 
 
 20
-And, Id("y"), Neq, Number(0), Or, 
+Basic(AnyInt), Id("i"), Stop, Basic(AnyFloat), ArrayEquationStart, 
 
-Not, Open, Id("y"), Les, Id("x"), 
+Number(3), ArrayEquationEnd, ArrayEquationStart, Number(3), ArrayEquationEnd, 
 
 30
-Close, Close, StartEnclose, Id("x"), Assigns, 
+Id("j"), Stop, EndEnclose, EndEnclose
 
-Id("x"), Plus, Number(1), Stop, Id("y"), 
-
-40
-Assigns, Id("y"), Minus, Number(1), Stop, 
-
-EndEnclose, EndEnclose
 
  */

@@ -1,0 +1,10 @@
+{
+    int [ 10 ] data ;
+    int index ;
+    index = 5 ;
+
+    data [ index ] = 99 ;
+
+    int temp ;
+    temp = data [ index - 1 ] ;
+}

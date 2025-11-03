@@ -1,0 +1,9 @@
+{
+    float[5][7] i; 
+    int j; 
+    int[3] k; 
+    { 
+        int i; 
+        float[i][3] j; 
+    }
+}

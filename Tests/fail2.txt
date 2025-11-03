@@ -1,0 +1,11 @@
+{
+    int outer_a ;
+    outer_a = 1 ;
+
+    {
+        int inner_b ;
+        inner_b = 2 ;
+    }
+
+    outer_a = outer_a + inner_b ;
+}

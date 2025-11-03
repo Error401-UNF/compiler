@@ -1,0 +1,15 @@
+{
+    int value ;
+    value = 50 ;
+    {
+        int result ;
+        result = value - 10 ;
+
+        bool value ;
+        value = false ;
+
+        if ( ! value ) {
+            result = value;         
+        }
+    }
+}

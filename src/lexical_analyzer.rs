@@ -1,5 +1,5 @@
 // lexical_analyzer.rs
-use std::rc::Rc;
+use std::{cell::RefCell, ptr::eq, rc::Rc};
 
 use super::symbol_table::{Env,Value};
 
@@ -54,12 +54,52 @@ pub enum tokens{
     StartEnclose, // squigly
     EndEnclose,
 }
-
+impl tokens {
+    pub fn render(self) -> String{
+        match self {
+            tokens::Null => return  "ε".to_owned(),
+            tokens::Id(v) => return  format!("{}",v),
+            tokens::Basic(value) => return  format!("{:?}",value),
+            tokens::Number(n) => return  format!("{}",n),
+            tokens::Real(r) => return  format!("{}",r),
+            tokens::ArrayEquationStart => return  "[".to_owned(),
+            tokens::ArrayEquationEnd => return  "]".to_owned(),
+            tokens::True => return  "true".to_owned(),
+            tokens::False => return  "false".to_owned(),
+            tokens::While => return  "while".to_owned(),
+            tokens::For => return  "for".to_owned(),
+            tokens::If => return  "if".to_owned(),
+            tokens::Else => return  "else".to_owned(),
+            tokens::Do => return  "do".to_owned(),
+            tokens::Break => return  "break".to_owned(),
+            tokens::Plus => return  "+".to_owned(),
+            tokens::Minus => return  "-".to_owned(),
+            tokens::Times => return  "*".to_owned(),
+            tokens::Assigns => return  "=".to_owned(),
+            tokens::Devides => return  "/".to_owned(),
+            tokens::Equals => return  "==".to_owned(),
+            tokens::Neq => return  "!=".to_owned(),
+            tokens::Les => return  "<".to_owned(),
+            tokens::Leq => return  "<=".to_owned(),
+            tokens::Gre => return  ">".to_owned(),
+            tokens::Geq => return  ">=".to_owned(),
+            tokens::And => return  "&&".to_owned(),
+            tokens::Or => return  "||".to_owned(),
+            tokens::Not => return  "!".to_owned(),
+            tokens::Open => return  "(".to_owned(),
+            tokens::Close => return  ")".to_owned(),
+            tokens::Stop => return  ";".to_owned(),
+            tokens::StartEnclose => return  "{".to_owned(),
+            tokens::EndEnclose => return  "}".to_owned(),
+        }
+    }
+}
 // regx for all of the things
 
 
 pub struct Lexer {
-    pub(crate) root_env: Env
+    pub all_scopes: Vec<Rc<Env>>,
+    pub root_env: Rc<Env>
 }
 
 impl Lexer{
@@ -67,8 +107,8 @@ impl Lexer{
         let mut out: Vec<tokens> = vec![];
 
         let mut code_left = raw_code;
-        let mut local_env = Env::new(None);
-
+        let mut local_env = Env::new_root();
+        self.root_env = Rc::clone(&local_env);
         
         while code_left != "" {
             //println!("{}", code_left);
@@ -106,8 +146,6 @@ impl Lexer{
                     "/" => {out.push(tokens::Devides); code_left = &code_left[segment.len()..]; break;}
                     "(" => {out.push(tokens::Open); code_left = &code_left[segment.len()..]; break;}
                     ")" => {out.push(tokens::Close); code_left = &code_left[segment.len()..]; break;}
-                    "{" => {out.push(tokens::StartEnclose); code_left = &code_left[segment.len()..]; break;}
-                    "}" => {out.push(tokens::EndEnclose); code_left = &code_left[segment.len()..]; break;}
                     "< " => {out.push(tokens::Les); code_left = &code_left[segment.len()..]; break;}
                     "> " => {out.push(tokens::Gre); code_left = &code_left[segment.len()..]; break;}
                     "<=" => {out.push(tokens::Leq); code_left = &code_left[segment.len()..]; break;}
@@ -119,9 +157,27 @@ impl Lexer{
                     "[" => {out.push(tokens::ArrayEquationStart); code_left = &code_left[segment.len()..]; break;}
                     "]" => {out.push(tokens::ArrayEquationEnd); code_left = &code_left[segment.len()..]; break;}
 
+                    // symbol table management
+                    "{" => {
+                        out.push(tokens::StartEnclose); 
+                        local_env = Env::child(&local_env); 
+                        self.all_scopes.push(Rc::clone(&local_env));
+                        code_left = &code_left[segment.len()..]; 
+                        break;
+                    }
+
+                    "}" => {
+                        out.push(tokens::EndEnclose); 
+                        if let Some(parent_rc) = &local_env.parent {
+                            local_env = Rc::clone(parent_rc);
+                        }
+                        code_left = &code_left[segment.len()..]; 
+                        break;
+                    }
+
                     x if x.chars().last().eq(&Some('[')) && x.len() != 1 => {
                         // should be a known array variable
-                        if local_env.get(x[..x.len()-1].to_owned()).is_some(){
+                        if Env::get(&local_env, x[..x.len()-1].to_owned()).is_some(){
                             // known variable
                             out.push(tokens::Id(x[..x.len()-1].to_owned()));
                             code_left = &code_left[segment.len()-1..];
@@ -136,23 +192,13 @@ impl Lexer{
 
                     // something that ends weird and not taken care of by something else
                     x if !is_last_char_letter(x) && x.len() > 1 => {
-
-                        if local_env.get(x[..x.len()-1].to_owned()).is_some(){
-                            // known variable
-                            out.push(tokens::Id(x[..x.len()-1].to_owned()));
-                            code_left = &code_left[segment.len()-1..];
-                            break;
-                        }
-
-
                         // we have a set of something then the full stop or space or end of file. This would be an expression we couldnt parse individually.
-
                         if let Some(&tokens::Basic(_)) = out.last() {
                             // default to id
                             let last_token = out.last().unwrap();
                             match last_token {
                                 tokens::Basic(v) => {
-                                    local_env.put(x[..x.len()-1].to_owned(), v.clone());
+                                    Env::put(&mut local_env, x[..x.len()-1].to_owned(), v.clone());
                                     out.push(tokens::Id(x[..x.len()-1].to_owned()));
                                     // full stop afterwards?
                                     code_left = &code_left[segment.len()..];
@@ -171,6 +217,8 @@ impl Lexer{
 
                         
 
+                        
+
                          // check for incomplete array
                         if let Some(tokens::ArrayEquationEnd) = out.last() {
                             // new eq and its likly a [i again
@@ -181,14 +229,14 @@ impl Lexer{
                                 break;
                             } else if Some(';') == x.chars().last() || Some(' ') == x.chars().last(){
                                 // its a new id.
-                                let id_value = Self::compile_arr(&out);
+                                let id_value = Self::compile_arr(&out,&local_env);
                                 if id_value.is_ok(){
-                                    local_env.put(x[..x.len()-1].to_owned(), id_value.unwrap());
+                                    Env::put(&mut local_env, x[..x.len()-1].to_owned(), id_value.unwrap());
                                     out.push(tokens::Id(x[..x.len()-1].to_owned()));
                                     if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
                                     
                                 } else {
-                                    println!("Id Value Error: {}",segment)
+                                    return Err(format!("Id Value Error: {}",segment));
                                 }
                                 code_left = &code_left[segment.len()..];
                                 break;
@@ -197,23 +245,25 @@ impl Lexer{
                             }
                         }
 
+                        // assume its a new var before checking old var
+                        if Env::get(&local_env, x[..x.len()-1].to_owned()).is_some(){
+                            // known variable
+                            out.push(tokens::Id(x[..x.len()-1].to_owned()));
+                            code_left = &code_left[segment.len()-1..];
+                            break;
+                        }
+
                         // number?
                         let num_string = &x[..x.len()-1];
                         let i = num_string.parse::<i32>();
                         let r = num_string.parse::<f32>();    
                         if i.is_ok(){
                             out.push(tokens::Number(i.unwrap()));
-                            code_left = &code_left[segment.len()..];
-                            if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
-                            if x.chars().last().eq(&Some(')')){ out.push(tokens::Close);}
-                            if x.chars().last().eq(&Some(']')){ out.push(tokens::ArrayEquationEnd);}
+                            code_left = &code_left[segment.len()-1..];
                             break;
                         } else if r.is_ok(){
                             out.push(tokens::Real(r.unwrap()));
-                            code_left = &code_left[segment.len()..];
-                            if x.chars().last().eq(&Some(';')){ out.push(tokens::Stop);}
-                            if x.chars().last().eq(&Some(')')){ out.push(tokens::Close);}
-                            if x.chars().last().eq(&Some(']')){ out.push(tokens::ArrayEquationEnd);}
+                            code_left = &code_left[segment.len()-1..];
                             break;
                         }
                         return Err(format!("problem with segment {:?}: {:?}",segment, out));
@@ -222,7 +272,7 @@ impl Lexer{
 
 
 
-                    _ => {
+                    x => {
                         if i == code_left.len()-1 {
                             //no more things to grab. Remove everything
                             println!("removed the following extra {}",segment);
@@ -235,12 +285,12 @@ impl Lexer{
             }
         }
         // pakage env up for the future
-        self.root_env = local_env;
+        
 
         return Ok(out);
     }
 
-    fn compile_arr(out:&Vec<tokens>) -> Result<Value, String>{
+    fn compile_arr(out:&Vec<tokens>,env:&Rc<Env>) -> Result<Value, String>{
         // go backwards until you find a basic. any numbers / ids are taken note of
         let mut current_position = out.len() - 1;
         let mut sizes: Vec<i32> = vec![];
@@ -248,9 +298,20 @@ impl Lexer{
         loop{
 
             if let tokens::Basic( v ) = &out[current_position] {
+
                 basic_val = v.clone();
                 break;
-            } else {
+            }
+            //else if let tokens::Id(v)= &out[current_position] {
+            //    let id_value = Env::get(env, v.to_string());
+            //    if id_value.is_some() && id_value.clone().unwrap().eq(&Value::AnyInt) {
+            //        basic_val = id_value.unwrap();
+            //    }else {
+            //        return Err(format!("Id not number"));
+            //    }
+            //    break;
+            //} 
+            else {
                 match  &out[current_position]  {
                     // you can have either something of size number or of an id. everytning else is thrown out
                     tokens::Number( n) => {
@@ -338,61 +399,3 @@ fn is_last_char_letter(s: &str) -> bool {
      || s.chars().last().eq(&Some('_'))
      || s.chars().last().eq(&Some('.'))
 }
-
-
-#[test]
-pub fn test_lexer() {
-    let code = "int i;\n\twhile (true)\n\t\ti=i+1;";
-    let mut par = Lexer{root_env:Env::new(None)};
-    let result = par.custom_lexer(code).unwrap();
-    println!("{}", Lexer::renderer(result));
-    par.root_env.print_all();
-}
-
-use std::fs;
-#[test]
-pub fn test_lexer_from_file(){
-    let contents = fs::read_to_string("TestSuites2/1.txt");
-    let code = contents.unwrap();
-    let mut par = Lexer{root_env:Env::new(None)};
-    let result = par.custom_lexer(&code).unwrap();
-    println!("{}", Lexer::renderer(result));
-    println!("------------");
-    par.root_env.print_all();
-}
-
-
-#[test]
-fn true_file_test(){
-    let args:Vec<String> = vec!["Something".to_string(), "TestSuites2/fail1.txt".to_string()];
-    if !args.is_empty(){
-        // something in the argument. expect 1 file arguement
-        let file_to_parse = &args[1];
-        let file = fs::read_to_string(file_to_parse);
-        if file.is_ok(){
-            let mut lexer = Lexer{
-                root_env: Env::new(None),
-            };
-
-            
-            let lex_output = lexer.custom_lexer(&file.unwrap());
-            if lex_output.is_err(){
-                println!("Parsing failed :(");
-                return;
-            }else {
-                println!("{}", Lexer::renderer(lex_output.unwrap()));
-                println!("\nParsing completed successfully.\n\nSymbol Table:\n\n----");
-                lexer.root_env.print_all();
-                return;
-            }
-
-        }
-        else {
-            println!("Invalid file: {:?}", args)
-        }
-    }
-    else {
-        println!("no file given")
-    }
-}
-
