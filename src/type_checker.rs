@@ -57,24 +57,37 @@ pub fn size_calculator(env:&Rc<Env>) -> Result<Vec<(MemoryType,String,Value, Vec
     return Ok(working_table);
 }
 
-fn size_of_value(v:&Value) -> Result<usize,String> {
+pub fn size_of_value(v:&Value) -> Result<usize,String> {
     match v {
-        Value::AnyInt | Value::Int(_)=> {
+        Value::AnyInt | Value::Int(_) | Value::Null=> {
             return Ok(size_of::<i32>());
         },
         Value::AnyBool | Value::Bool(_) => {
             return Ok(size_of::<bool>());
         }
         Value::AnyFloat | Value::Float(_) => {
-            return Ok(size_of::<f32>());
+            return Ok(size_of::<f64>());
         }
-        v => {
-            return Err(format!("Failed to parse True value {:?}", v));
+        Value::ArrayOf(_, _) => {
+            return Ok(array_size(&v.clone()));
+        }
+        _v => {
+            return Err(format!("Failed to parse True value of: {:?}", _v));
+        }
+    }
+}
+fn array_size(v: &Value) -> usize {
+    match v {
+        Value::ArrayOf(inner, len) => {
+            array_size(inner) * (*len as usize)
+        },
+        _ => {
+            size_of_value(v).unwrap_or(4) 
         }
     }
 }
 
-fn get_base_type(v:Rc<Value>,mut arr:Vec<usize>) -> (Value,Vec<usize>) {
+pub fn get_base_type(v:Rc<Value>,mut arr:Vec<usize>) -> (Value,Vec<usize>) {
     match v.deref() {
         Value::AnyInt => return (Value::AnyInt, arr),
         Value::Int(_) => return (Value::AnyInt, arr),
@@ -84,5 +97,40 @@ fn get_base_type(v:Rc<Value>,mut arr:Vec<usize>) -> (Value,Vec<usize>) {
         Value::Float(_) => return (Value::AnyFloat, arr),
         Value::Null => return (Value::Null, arr),
         Value::ArrayOf(value, s) => {arr.push(*s as usize); return get_base_type(value.clone(), arr)},
+    }
+}
+
+pub fn widen(first:Value, second:Value) -> Result<(Value,Value), String>{
+    // this language only has like 3 types this is a very sumple function
+    // float > int
+    match first {
+        Value::AnyFloat | Value::Float(_)  => {
+            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null | Value::AnyBool | Value::Bool(_)){
+                if let Value::Float(_) = second {
+                    return Ok((first, second));
+                }
+                if let Value::Int(i) = second {
+                    return Ok((first, Value::Float(i as f64)));
+                }
+                return Ok((first, Value::AnyFloat));
+            } 
+            return Err(format!("Invalid Type Matchup"));
+        },
+        Value::AnyInt | Value::Int(_)  => {
+            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null | Value::AnyBool | Value::Bool(_)){
+                if let Value::Int(_) | Value::AnyInt = second {
+                    return Ok((first, second));
+                }
+                // widen first
+                if let Value::Int(i) = first {
+                    return Ok((Value::Float(i as f64), second));
+                }
+                return Ok((Value::AnyFloat, second));
+            } 
+            return Err(format!("Invalid Type Matchup"));
+        }
+        _ => {
+            return Err(format!("Invalid Type Matchup"));
+        }
     }
 }

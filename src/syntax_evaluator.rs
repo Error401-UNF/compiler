@@ -34,9 +34,9 @@ impl Clone for IndexBox {
 
 #[derive(Debug)]
 pub struct SyntaxTreeNode {
-    parent:Option<IndexBox>,
-    opperator:Opperator,
-    expected_type:Value,
+    pub parent:Option<IndexBox>,
+    pub opperator:Opperator,
+    pub expected_type:Value,
     pub child_nodes: (Option<IndexBox>,Option<IndexBox>),
 }
 impl SyntaxTreeNode {
@@ -56,19 +56,24 @@ impl SyntaxTreeNode {
             child_nodes: (None,None),
         }
     }
-    pub fn render_node(&self, tree_vector:&Vec<Rc<RefCell<SyntaxTreeNode>>>, depth:usize){
-        let indent = "  |".repeat(depth);
+    pub fn render_node(&self, tree_vector:&Vec<Rc<RefCell<SyntaxTreeNode>>>, depth:usize, right:bool){
+        let indent:String;
+        if right {
+            indent = "  |".repeat(depth);
+        } else {
+            indent = "  |".repeat(depth) + "l: ";
+        }
         // render self
 
         println!("{}{:?}",indent,self.opperator);
 
         if self.child_nodes.0.is_some(){
             let left = &tree_vector[self.child_nodes.0.clone().unwrap().get()].borrow();
-            left.render_node(tree_vector, depth+1);
+            left.render_node(tree_vector, depth+1,false);
         }
         if self.child_nodes.1.is_some(){
             let right = &tree_vector[self.child_nodes.1.clone().unwrap().get()].borrow();
-            right.render_node(tree_vector, depth+1);
+            right.render_node(tree_vector, depth+1,true);
         }
     }
 }
@@ -303,7 +308,6 @@ pub fn rotate_left_helper(
 pub enum Opperator {
     // Structural Operators
     Terminal(tokens), // Leaf nodes: num, real, true, false, true, false
-    Variable,         // References to variables (id/var)
     Enclose,          // Parentheses group: ( expr )
     ArrayAccess,      // Array indexing: [ condition ]
     

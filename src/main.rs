@@ -13,7 +13,6 @@ use std::cell::RefCell;
 // for collecting command line arguements
 use std::env;
 use std::fs;
-use std::ops::Deref;
 use std::process::ExitCode;
 use std::rc::Rc;
 
@@ -92,6 +91,13 @@ fn main() -> ExitCode{
                             println!("tree parse error: {}",raw_tree.unwrap_err());
                             return ExitCode::from(1);
                         }
+                    }
+                    println!("tree displays");
+                    for ast in all_ast_trees {
+                        let ind = ast.top_node.get();
+                        let tree_vec = ast.tree_vector.borrow();
+                        let top_node = tree_vec[ind].borrow();
+                        top_node.render_node(&tree_vec, 0,true);
                     }
                    
                     println!("Syntaxing finished");
