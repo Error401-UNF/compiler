@@ -20,7 +20,7 @@
     };
 
     # Function to create the GTK Rust derivation for a specific system (native or cross)
-    mkGtkRsDerivation = { targetSystem, systemPkgs }:
+    mkGtkRsDerivation = { targetSystem, systemPkgs, platformMeta }:
       # Use `rustPlatform.buildRustPackage` for reliable Rust compilation
       systemPkgs.rustPlatform.buildRustPackage {
         pname = "minimal-gtk-app";
@@ -28,6 +28,10 @@
 
         # The source code is the current directory
         src = self;
+        
+        # REQUIRED FOR NIX RUST BUILDS: Needs a hash of the Cargo.lock dependencies
+        # Use an empty string hash for the first build. Nix will tell you the correct hash to use.
+        cargoHash = "";
 
         # Add the GTK/Adwaita dependencies needed for building
         buildInputs = with systemPkgs; [
@@ -60,7 +64,8 @@
         # Standard check for all derivations
         meta = {
           description = "Cross-compiled GTK application";
-          platforms = systemPkgs.lib.platforms.all;
+          # Use the platformMeta passed to the function
+          platforms = platformMeta;
         };
       };
 
@@ -68,6 +73,7 @@
     nativePackage = mkGtkRsDerivation {
       targetSystem = system;
       systemPkgs = pkgs;
+      platformMeta = pkgs.lib.platforms.all; # Use all for native build
     };
 
     # Cross-Compiled (Windows) Package
@@ -81,6 +87,8 @@
     windowsPackage = mkGtkRsDerivation {
       targetSystem = crossSystem.system;
       systemPkgs = crossPkgs;
+      # Explicitly use Nixpkgs windows platforms list for the cross-compiled target
+      platformMeta = pkgs.lib.platforms.windows; 
     };
 
 
