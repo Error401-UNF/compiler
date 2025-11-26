@@ -1,52 +1,142 @@
 {
-  description = "A local development shell for Rust Project 1";
+  description = "Nix Flake for GTK-RS Development Environment";
 
   inputs = {
-    # Pin Nixpkgs to a specific commit/branch for reproducibility
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-24.05";
   };
 
   outputs = { self, nixpkgs, ... }:
   let
-    # Set the system architecture (adjust if not x86_64-linux)
+    # Define the native system architecture (Linux build)
     system = "x86_64-linux";
     pkgs = nixpkgs.legacyPackages.${system};
+
+    # Define the cross-compilation system (Windows build)
+    crossSystem = {
+      # Target for MinGW (Windows)
+      system = "x86_64-pc-windows-gnu";
+      # The host system where the cross-compiler runs
+      host = system;
+    };
+
+    # Function to create the GTK Rust derivation for a specific system (native or cross)
+    mkGtkRsDerivation = { targetSystem, systemPkgs }:
+      # Use `rustPlatform.buildRustPackage` for reliable Rust compilation
+      systemPkgs.rustPlatform.buildRustPackage {
+        pname = "minimal-gtk-app";
+        version = self.rev or "dirty";
+
+        # The source code is the current directory
+        src = self;
+
+        # Add the GTK/Adwaita dependencies needed for building
+        buildInputs = with systemPkgs; [
+          # GTK/GLib dependencies (will pull MinGW versions when cross-compiling)
+          gtk4
+          libadwaita
+        ];
+
+        # Add `pkg-config` and C compiler for linking
+        nativeBuildInputs = with systemPkgs; [
+          pkg-config
+          # The appropriate cross-compiler (gcc) will be automatically selected by Nixpkgs
+          systemPkgs.stdenv.cc
+        ];
+
+        # Ensure the build uses the correct cross-compilation target
+        cargoBuildFlags = [
+          "--target" targetSystem
+        ];
+
+        # Set the target triplet explicitly for the linker
+        RUST_TARGET = targetSystem;
+
+        # Standard checks and hardening
+        checkPhase = ''
+          # Optional: Run tests for the target (usually disabled for cross-compilation)
+          # cargo test --target $RUST_TARGET
+        '';
+
+        # Standard check for all derivations
+        meta = {
+          description = "Cross-compiled GTK application";
+          platforms = systemPkgs.lib.platforms.all;
+        };
+      };
+
+    # Native (Linux) Package
+    nativePackage = mkGtkRsDerivation {
+      targetSystem = system;
+      systemPkgs = pkgs;
+    };
+
+    # Cross-Compiled (Windows) Package
+    crossPkgs = import nixpkgs {
+      inherit crossSystem;
+      # We still use the native system as the host for the build tools
+      localSystem = { inherit system; };
+      config = { }; # Standard config
+    };
+
+    windowsPackage = mkGtkRsDerivation {
+      targetSystem = crossSystem.system;
+      systemPkgs = crossPkgs;
+    };
+
+
   in
   {
-    # Define a default development shell for this project
+    # Defines the development shell environment (Only for native development on Linux)
     devShells.${system}.default = pkgs.mkShell {
-      name = "rust-project-1-dev";
+      name = "gtk-rs-development-environment";
 
-      # The build tools required for this specific project
+      # Tools/Compilers needed for the build process (added rust-analyzer for IDE support)
       nativeBuildInputs = with pkgs; [
         pkg-config
         gcc
-        rustc              # Provides rustc
-        rust-analyzer
+
+        # Declarative Rust toolchain (Replaces rustup/cargo from your original shell)
+        rustc
         cargo
+        rust-analyzer
+
+        # Dependencies for GTK-RS/GNOME development
+        gobject-introspection
+        libadwaita.dev
+        glib.dev
+        gtk4.dev
+        xorg.libX11.dev
       ];
 
-      # Libraries needed by the C-dependencies of this project
-      # Example: If Project1 uses the 'sqlite' crate
+      # Libraries needed to run the resulting application
       buildInputs = with pkgs; [
-        sqlite # Specific library for Project 1
-        musl
+        gtk4
+        libadwaita
+        xorg.libX11
       ];
 
+      # Setting TMPDIR as requested
+      TMPDIR = "/tmp";
+
+      # Environment setup hook
       shellHook = ''
-        # AGGRESSIVE CLEANUP: Unset common environment variables that
-        # often leak old, absolute library paths into the linker arguments (cc).
-        unset RUSTFLAGS
-        unset LDFLAGS
-        unset CFLAGS
-        
         export RUST_BACKTRACE=1
         echo "--------------------------------------------------------"
-        echo "Rust Project 1 Environment Ready (Stable)."
-        echo "Environment variables were cleaned to prevent linker path conflicts."
-        echo "Use 'cargo build' or 'cargo check' to test your compiler."
+        echo "GTK-RS development environment ready (Flake-based)!"
+        echo "Use 'cargo build' or 'nix build' to build the native Linux app."
         echo "--------------------------------------------------------"
       '';
+    };
+
+    # Export packages for building (The 'nix build' targets)
+    packages.${system} = {
+      default = nativePackage;
+      minimal-gtk-app = nativePackage;
+    };
+
+    packages.${crossSystem.system} = {
+      default = windowsPackage;
+      minimal-gtk-app = windowsPackage;
     };
   };
 }
