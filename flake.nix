@@ -94,7 +94,6 @@
 
   in
   {
-    # Defines the development shell environment (Only for native development on Linux)
     devShells.${system}.default = pkgs.mkShell {
       name = "gtk-rs-development-environment";
 
