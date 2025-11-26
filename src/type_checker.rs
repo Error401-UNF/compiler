@@ -1,4 +1,4 @@
-use std::{ops::Deref, rc::Rc};
+use std::{mem::size_of, ops::Deref, rc::Rc};
 
 use super::symbol_table::{Env,Value};
 //use super::parser::{TreeNode,TreeControler};
