@@ -11,7 +11,7 @@ pub enum tokens{
     Id(String),
     Basic(Value),
     Number(i32),
-    Real(f32),
+    Real(f64),
 
     // calling array
     ArrayEquationStart,
@@ -91,6 +91,20 @@ impl tokens {
             tokens::Stop => return  ";".to_owned(),
             tokens::StartEnclose => return  "{".to_owned(),
             tokens::EndEnclose => return  "}".to_owned(),
+        }
+    } 
+    pub fn extract_int_value(&self) -> Option<i32>{
+        match self {
+            tokens::Number(n) => return Some(n.clone()),
+            tokens::Real(r) => return Some(r.clone() as i32),
+            _ => {return None;}
+        }
+    }
+    pub fn extract_float_value(&self) -> Option<f64>{
+        match self {
+            tokens::Number(n) => return Some(n.clone() as f64),
+            tokens::Real(r) => return Some(r.clone()),
+            _ => {return None;}
         }
     }
 }
@@ -256,7 +270,7 @@ impl Lexer{
                         // number?
                         let num_string = &x[..x.len()-1];
                         let i = num_string.parse::<i32>();
-                        let r = num_string.parse::<f32>();    
+                        let r = num_string.parse::<f64>();    
                         if i.is_ok(){
                             out.push(tokens::Number(i.unwrap()));
                             code_left = &code_left[segment.len()-1..];
