@@ -691,10 +691,10 @@ impl RecordManager {
                 let top_ind = this_ast.top_node;
                 
                 // launch ast
-                println!("Launched ast tree num {}:",ast_index );
-                tree_vec[top_ind.get()].borrow().render_node(&tree_vec, 0,true);
+                //println!("Launched ast tree num {}:",ast_index );
+                //tree_vec[top_ind.get()].borrow().render_node(&tree_vec, 0,true);
                 let mut ast_output = self.generate_ast_code(&mut tree_vec, top_ind, current_scope)?;
-                println!("Ended with code:\n{}And result {}\n", Self::print_record_vec(&ast_output.0),  ast_output.1);
+                //println!("Ended with code:\n{}And result {}\n", Self::print_record_vec(&ast_output.0),  ast_output.1);
                 
                 self.add_record_list(&mut ast_output.0);
 

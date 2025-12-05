@@ -104,7 +104,7 @@ fn main() -> ExitCode{
                     println!("Syntaxing finished");
 
                     // generate intermidiate code
-                    println!("Generating Intermidate Code");
+                    println!("Generating Intermidate Code\n");
                     // turn env into static env's
                     let addr_env = AddressedEnv::from_root(lexer.root_env);
                     println!("Starting Addressed env \n{}",addr_env.display_all());
@@ -128,7 +128,7 @@ fn main() -> ExitCode{
                         println!("Code Generation Error: {}", result.unwrap_err());
                         return ExitCode::from(1);
                     }
-                    println!("\n\nAddressed Env with temp\n{}",record_manager.global_env.display_all());
+                    println!("\nAddressed Env with temp\n{}",record_manager.global_env.display_all());
                     
                     println!("Generated Code:\n{}",record_manager.print_records());
 
