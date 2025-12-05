@@ -601,14 +601,19 @@ impl Parser {
                     let next_cond = Self::detect_next_conditon_type(&input,current_input_index + 2);
                     let cond = TreeNode::child(current_rule_node, next_cond.clone(), Value::Null);
 
+                    // statement
+                    let stmt = TreeNode::child(current_rule_node, Rules::StmtMarker, Value::Null);
+
+
                     // add to tree
                     tree.put(current_rule_node, whil);
                     tree.put(current_rule_node, open);
                     let condition = tree.put(current_rule_node, cond);
                     tree.put(current_rule_node, close);
+                    let statement = tree.put(current_rule_node, stmt);
 
                     // push next rule
-                    rules_to_process.push_front((Rules::StmtMarker, current_rule_node));
+                    rules_to_process.push_front((Rules::StmtMarker, statement));
                     rules_to_process.push_front((Rules::Jump(1), condition)); // consume close )
                     rules_to_process.push_front((next_cond, condition));
                     

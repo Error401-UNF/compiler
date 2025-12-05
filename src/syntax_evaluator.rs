@@ -1121,9 +1121,9 @@ impl Syntaxer {
                     return Err(format!("Division optimization for 2^n +/- 1 is unimplemented. Stats: offset {}. number to shift {}", offset, number_to_shift));
                 }
             }
-            println!("optimization Done!!");
+            //println!("optimization Done!!");
             tree_vec[index.get()].borrow().render_node(tree_vec, 0, false);
-            println!("stats: offset {}. number to shift {}\n", offset, number_to_shift);
+            //println!("stats: offset {}. number to shift {}\n", offset, number_to_shift);
         }
 
         // 3. Standard Recursion on Children

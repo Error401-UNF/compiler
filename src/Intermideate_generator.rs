@@ -26,8 +26,8 @@ pub enum OperationCode {
     Or,
     Les,
     Leq,
-    Mor,
-    Meq,
+    Gre,
+    Geq,
     Eeq,
     Neq,
 
@@ -43,7 +43,8 @@ pub enum OperationCode {
     WidenToInt,
 
     // copy instructuon of form x = y
-    Put,
+    Put, //
+    AsAdderess,
 
     // unconditional jump of form goto L, where L is a label
     Goto,
@@ -143,14 +144,14 @@ impl Record {
         if self.result.is_none() {
             // no result meaning code looks like
             if self.source2.is_some() {
-                return format!("{:?} {:?} {:?}\n",self.op_code, self.source1.display(),self.source2.clone().unwrap().display());
+                return format!("{:?} {:?} {:?}\n",self.op_code, self.source1.display(), self.source2.clone().unwrap().display());
             } else {
                 return format!("{:?} {:?}\n",self.op_code, self.source1.display());
             }
         }
-        if self.source2.is_some(){
-            return format!("{:?} {:?} then {:?}\n", self.op_code,self.source1.display(), self.source2.clone().unwrap().display());
-        } else {
+        if self.source2.is_some(){ // 2 source eq
+            return format!("{:?} = {:?} {:?} {:?}\n", self.result.clone().unwrap().display(), self.source1.display(), self.op_code, self.source2.clone().unwrap().display());
+        } else { // 1 source unary
             return format!("{:?} = {:?} {:?}\n", self.result.clone().unwrap().display(), self.op_code, self.source1.display());
         }
     }
@@ -179,8 +180,10 @@ impl RecordManager {
     }
     pub fn print_records(&self) -> String{
         let mut out = "".to_owned();
+        let mut rec_num = 0;
         for rec in &self.all_records {
-            out = out.to_owned() + &rec.display();
+            out = out.to_owned() +&format!("{}: ",rec_num) + &rec.display();
+            rec_num +=1 ;
         }
         return out.to_owned();
     }
@@ -247,13 +250,13 @@ impl RecordManager {
                 });
                 sink_addr = temp_sink_addr;
             }
-
             output.push(Record {
                 source1: AddressValue::new_addr(source_addr),
                 source2: None,
                 op_code: OperationCode::Put,
                 result: Some(sink_addr),
             });
+           
 
             return Ok(output);
         } else {
@@ -414,11 +417,22 @@ impl RecordManager {
                 source1: AddressValue::new_addr(index_addr),
                 source2: Some(AddressValue::new_addr(width_addr)),
                 op_code: OperationCode::Mul,
-                result: Some(offset_addr)
+                result: Some(offset_addr.clone())
+            });
+
+            // put as address
+            let address_tmp = self.make_temp(current_scope, inner_type.clone());
+            let address_addr = self.get_address(address_tmp.clone(),current_scope)?;
+
+            record_list.push(Record {
+                source1: AddressValue::new_addr(offset_addr),
+                source2: None,
+                op_code: OperationCode::AsAdderess,
+                result: Some(address_addr)
             });
             
             // Return the calculated offset and the type of the element
-            return Ok((offset_temp, inner_type,record_list.to_vec()));
+            return Ok((address_tmp, inner_type,record_list.to_vec()));
         };
     }
 
@@ -515,15 +529,17 @@ impl RecordManager {
                 let res_id = post_cond_data.result_id.clone();
                 
                 
+                
 
                 // 2 iffalse
-                let false_record_ind = self.all_records.len();
+                let false_record_ind = self.all_records.len().clone();
                 self.add_record(Record { 
-                    source1: AddressValue::new_addr(self.get_address(res_id.clone(), data.current_scope)?),
+                    source1: AddressValue::new_addr(self.get_address(res_id.clone(), post_cond_data.current_scope)?),
                     source2: Some(AddressValue::new_const(Constent {contained_value: Value::AnyInt})), // this will be changed later. thats why we have the index saved
                     op_code: OperationCode::IfFalse, 
                     result:  None
                 });
+                //println!("***********While: false rec ind {} and gathered record {}",false_record_ind, self.get_record(false_record_ind).display());
                 
 
                 // 3 stmt code
@@ -675,10 +691,11 @@ impl RecordManager {
                 let top_ind = this_ast.top_node;
                 
                 // launch ast
-                //println!("Launched ast tree:");
-                //tree_vec[top_ind.get()].borrow().render_node(&tree_vec, 0,true);
+                println!("Launched ast tree num {}:",ast_index );
+                tree_vec[top_ind.get()].borrow().render_node(&tree_vec, 0,true);
                 let mut ast_output = self.generate_ast_code(&mut tree_vec, top_ind, current_scope)?;
-
+                println!("Ended with code:\n{}And result {}\n", Self::print_record_vec(&ast_output.0),  ast_output.1);
+                
                 self.add_record_list(&mut ast_output.0);
 
                 local_data.ast_index +=1;
@@ -838,8 +855,7 @@ impl RecordManager {
                 // get sink
                 let mut sink = left_child_code.unwrap();
 
-                // check source or sink for being arrays
-
+                // check source or sink for being arraysl(_);
                 // make record linking them
                 let record = self.generate_assignment_code(source.1,sink.1.clone(), current_scope);
 
@@ -946,11 +962,11 @@ impl RecordManager {
                     },
                     Opperator::Greater => {
                         res_type = Value::AnyBool;
-                        op =  OperationCode::Mor;
+                        op =  OperationCode::Gre;
                     },
                     Opperator::GreaterEquals => {
                         res_type = Value::AnyBool;
-                        op =  OperationCode::Meq;
+                        op =  OperationCode::Geq;
                     },
                     Opperator::And => {
                         res_type = Value::AnyBool;

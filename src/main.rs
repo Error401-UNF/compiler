@@ -56,7 +56,7 @@ fn main() -> ExitCode{
                 } else {
                     println!("Parsing Finished");
                     let controller = res.unwrap();
-                    //controller.render_node(0, 0);
+                    //controller.render_node(0, 0); // Debug line **************************************************************
                     let size_out = size_calculator(&lexer.root_env);
                     println!("Size calculations\n{:?}",size_out.unwrap());
                 
@@ -92,7 +92,7 @@ fn main() -> ExitCode{
                             return ExitCode::from(1);
                         }
                     }
-                    // /* 
+                    /* 
                     println!("tree displays");
                     for ast in all_ast_trees.clone() {
                         let ind = ast.top_node.get();
@@ -100,7 +100,7 @@ fn main() -> ExitCode{
                         let top_node = tree_vec[ind].borrow();
                         top_node.render_node(&tree_vec, 0,true);
                     }
-                    // */
+                    */
                     println!("Syntaxing finished");
 
                     // generate intermidiate code
