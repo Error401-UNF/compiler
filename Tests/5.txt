@@ -3,6 +3,6 @@
     count = 10 ;
     do {
         count = count - 1 ;
-        if (- count <= - 5) break ;
+        if (count <= - 5) break ;
     } while (count > 0) ;
 }
