@@ -380,6 +380,7 @@ impl Parser {
                             // { block }
                             let stmt_block = TreeNode::child(current_rule_node, Rules::StmtToBlock, Value::Null);
                             let stmt_index = tree.put(current_rule_node, stmt_block);
+
                             rules_to_process.push_front((Rules::StmtToBlock, stmt_index));
                             break 'inner;
                         }
@@ -467,61 +468,49 @@ impl Parser {
                         // detect all types of statements
                         tokens::StartEnclose => 'inner: {
                             // { block }
-                            let stmt_block = TreeNode::child(current_rule_node, Rules::StmtToBlock, Value::Null);
-                            let stmt_index = tree.put(current_rule_node, stmt_block);
 
                             tree.update_marker(current_rule_node, Rules::StmtToBlock);
-                            rules_to_process.push_front((Rules::StmtToBlock, stmt_index));
+                            rules_to_process.push_front((Rules::StmtToBlock, current_rule_node));
                             break 'inner;
                         }
 
                         tokens::Basic(v) => 'inner: {
                             // decl
-                            let decl_block = TreeNode::child(current_rule_node, Rules::StmtToDecl, v.clone());
-                            let decl_index = tree.put(current_rule_node, decl_block);
                             
                             tree.update_marker(current_rule_node, Rules::StmtToDecl);
-                            rules_to_process.push_front((Rules::StmtToDecl, decl_index));
+                            rules_to_process.push_front((Rules::StmtToDecl, current_rule_node));
                             break 'inner;
                         }
 
                         tokens::Break => 'inner: {
                             // break ;
-                            let break_block = TreeNode::child(current_rule_node, Rules::StmtToBreak,  Value::Null);
-                            let break_index = tree.put(current_rule_node, break_block);
                             
                             tree.update_marker(current_rule_node, Rules::StmtToBreak);
-                            rules_to_process.push_front((Rules::StmtToBreak, break_index));
+                            rules_to_process.push_front((Rules::StmtToBreak, current_rule_node));
                             break 'inner;
                         }
 
                         tokens::While => 'inner: {
                             // while ( condition ) { block }
-                            let block = TreeNode::child(current_rule_node, Rules::StmtToWhile,  Value::Null);
-                            let index = tree.put(current_rule_node, block);
                             
                             tree.update_marker(current_rule_node, Rules::StmtToWhile);
-                            rules_to_process.push_front((Rules::StmtToWhile, index));
+                            rules_to_process.push_front((Rules::StmtToWhile, current_rule_node));
                             break 'inner;
                         }
 
                         tokens::Do => 'inner: {
                             // do stmt while ( condition ) ;
-                            let block = TreeNode::child(current_rule_node, Rules::StmtToDo, Value::Null);
-                            let index = tree.put(current_rule_node, block);
                             
                             tree.update_marker(current_rule_node, Rules::StmtToDo);
-                            rules_to_process.push_front((Rules::StmtToDo, index));
+                            rules_to_process.push_front((Rules::StmtToDo, current_rule_node));
                             break 'inner;
                         }
 
                         tokens::If => 'inner: {
                             // if ( condition ) stmt elif
-                            let block = TreeNode::child(current_rule_node, Rules::StmtToIf, Value::Null);
-                            let index = tree.put(current_rule_node, block);
                             
                             tree.update_marker(current_rule_node, Rules::StmtToIf);
-                            rules_to_process.push_front((Rules::StmtToIf, index));
+                            rules_to_process.push_front((Rules::StmtToIf, current_rule_node));
                             break 'inner;
                         }
 
@@ -1400,24 +1389,3 @@ impl Parser {
         return Rules::ConditionToObjectHcon;
     }
 }
-
-/* hw
-StartEnclose, Basic(AnyFloat), ArrayEquationStart, Number(5), ArrayEquationEnd, 
-
-ArrayEquationStart, Number(7), ArrayEquationEnd, Id("i"), Stop, 
-
-10
-Basic(AnyInt), Id("j"), Stop, Basic(AnyInt), ArrayEquationStart, 
-
-Number(3), ArrayEquationEnd, Id("k"), Stop, StartEnclose, 
-
-20
-Basic(AnyInt), Id("i"), Stop, Basic(AnyFloat), ArrayEquationStart, 
-
-Number(3), ArrayEquationEnd, ArrayEquationStart, Number(3), ArrayEquationEnd, 
-
-30
-Id("j"), Stop, EndEnclose, EndEnclose
-
-
- */

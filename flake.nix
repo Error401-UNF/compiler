@@ -3,7 +3,7 @@
 
   inputs = {
     # Pin Nixpkgs to a specific commit/branch for reproducibility
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
   };
 
   outputs = { self, nixpkgs, ... }:

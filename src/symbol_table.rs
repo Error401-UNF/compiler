@@ -30,6 +30,14 @@ impl Value {
             Value::Null => return format!(""),
         }
     }
+    pub fn generalize(&self) -> Value {
+        match self {
+            Value::AnyInt | Value::Int(_) => return Value::AnyInt,
+            Value::AnyBool | Value::Bool(_) => return Value::AnyBool,
+            Value::AnyFloat | Value::Float(_) => return Value::AnyFloat,
+            Value::ArrayOf(_, _) | Value::Null => return self.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -215,7 +223,7 @@ impl AddressedEnv {
     /// abuses strict ordering of scopes to find the addr for a var anywhere.
     pub fn find_addr_at_scope(&self, id:String, scope_number:usize) -> Result<Address,String> {
         let scope = self.enviornment_list.get(scope_number);
-        if scope.is_none() { return Err(format!("Scope not found"));}
+        if scope.is_none() { return Err(format!("Scope not found for scope number {}. Id was {}", scope_number, id));}
         let scope = scope.unwrap(); // just rewrite what scope means its fine
         if scope.address_list.borrow().contains_key(&id) {
             // id is somewhere here
@@ -225,13 +233,12 @@ impl AddressedEnv {
         if scope.parent.is_some() {
             return self.find_addr_at_scope(id, scope.parent.unwrap());
         }
-
-        Err(format!("value not found"))
+        Err(format!("Address with id: {} not found in scope number {}", id, scope_number))
     }
     /// abuses strict ordering of scopes to find the addr for a var anywhere.
     pub fn find_type_at_scope(&self, id:String, scope_number:usize) -> Result<Value,String> {
         let scope = self.enviornment_list.get(scope_number);
-        if scope.is_none() { return Err(format!("Scope not found"));}
+        if scope.is_none() { return Err(format!("Scope not found for scope number {}. Id was {}", scope_number, id));}
         let scope = scope.unwrap(); // just rewrite what scope means its fine
         if scope.address_list.borrow().contains_key(&id) {
             // id is somewhere here
@@ -242,7 +249,7 @@ impl AddressedEnv {
             return self.find_type_at_scope(id, scope.parent.unwrap());
         }
 
-        Err(format!("value not found"))
+        Err(format!("Type with id: {} not found in scope number {}", id, scope_number))
     }
     pub fn display(&self, scope_number:usize) -> String {
         let mut out = String::new();
@@ -261,6 +268,14 @@ impl AddressedEnv {
             out += &format!("{}->{}: {}\n",ind,ind+size, id);
         }
 
+        return out;
+    }
+    pub fn display_all(&self) -> String {
+        let mut out = String::new();
+        for scope_num in 0..self.enviornment_list.len() {
+            out += &format!("Scope #{}\n",scope_num);
+            out += &self.display(scope_num);
+        }
         return out;
     }
 }

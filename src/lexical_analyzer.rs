@@ -107,6 +107,12 @@ impl tokens {
             _ => {return None;}
         }
     }
+    pub fn extract_id_value(&self) -> Option<String>{
+        match self {
+            tokens::Id(s) => return Some(s.clone()),
+            _ => {return None;}
+        }
+    }
 }
 // regx for all of the things
 

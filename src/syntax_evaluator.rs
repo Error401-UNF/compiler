@@ -224,83 +224,161 @@ impl SyntaxTree {
 /// P = Pivot (at pivot_index)
 /// R = Right Child of P
 /// RL = Left Child of R
-pub fn rotate_left_helper(
-    // CRITICAL CHANGE: Accept a mutable reference to the RefMut guard
-    // We use &mut *tree_vec inside the function to get the &mut Vec<...>
-    tree_vec_guard: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>,
-    pivot_index: usize
-) -> Result<(), &'static str> {
+pub fn rotate_left_helper(tree_vec: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>, p_index: usize) -> Result<(), String> {
     
-    // Alias the mutable vector reference for cleaner access
-    let tree = &mut **tree_vec_guard; 
+    let p_node = tree_vec[p_index].borrow();
     
-    // Variables needed outside the data gathering scope.
-    let r_index: usize;
-    let gp_ptr: Option<IndexBox>;
-    let rl_ptr: Option<IndexBox>;
-    let r_ptr: IndexBox;
-    let p_index_box = IndexBox::new(pivot_index); 
+    // R is the right child of P (the new root)
+    let r_idx_box = p_node.child_nodes.1.clone().ok_or("Rotation failed: Right child (R) is missing.")?;
+    let r_index = r_idx_box.get();
+    let r_node = tree_vec[r_index].borrow();
 
-    {
-        // --- Data Gathering (Immutable Borrows of nodes) ---
-        
-        let pivot_node_ref = tree.get(pivot_index).ok_or("Pivot index is out of bounds.")?;
-        
-        // 1. Get R index and R pointer
-        let pivot_node_borrow = pivot_node_ref.borrow();
-        let r_ptr_ref = pivot_node_borrow.child_nodes.1.as_ref().ok_or("Cannot rotate left: Pivot has no right child.")?;
-        r_index = r_ptr_ref.get(); 
-        r_ptr = r_ptr_ref.clone();
-        
-        // 2. Clone Pointers for GP and RL
-        let r_node_ref = tree.get(r_index).unwrap();
-        
-        gp_ptr = pivot_node_ref.borrow().parent.clone(); 
-        rl_ptr = r_node_ref.borrow().child_nodes.0.clone();
-        
-    } // IMMUTABLE BORROWS of the individual nodes (Rc<RefCell<SyntaxTreeNode>>) end here.
+    // C is the left child of R (the inner child)
+    let c_idx_box = r_node.child_nodes.0.clone();
+    let c_index = c_idx_box.as_ref().map(|idx| idx.get());
 
-    // --- Step 2: Update Grandparent Index Pointer (Mutating the Rc<RefCell<usize>>) ---
+    // GP is the parent of P (the grandparent)
+    let gp_ptr = p_node.parent.clone();
+
+    // Drop all immutable borrows before starting mutations
+    drop(p_node); 
+    drop(r_node);
+    
+    // 2. MUTATE POINTERS
+
+    // --- 2.1. Update GP to point to R ---
     if let Some(gp) = gp_ptr.as_ref() {
-        let gp_index = gp.get(); 
-        // Accessing the node requires an immutable borrow of the node's RefCell
-        let gp_node = tree.get(gp_index).unwrap(); 
+        let gp_index = gp.get();
+        let mut gp_node = tree_vec[gp_index].borrow_mut(); 
 
-        // Find which child link of GP points to P and mutate that specific Rc<RefCell<usize>> to point to R.
-        let gp_node_borrow = gp_node.borrow();
-        if gp_node_borrow.child_nodes.0.as_ref().map(|idx_box| idx_box.get() == pivot_index).unwrap_or(false) {
-            let gp_left_index_rc = gp_node_borrow.child_nodes.0.as_ref().unwrap().getindex();
-            *gp_left_index_rc.borrow_mut() = r_index; 
-        } 
-        else if gp_node_borrow.child_nodes.1.as_ref().map(|idx_box| idx_box.get() == pivot_index).unwrap_or(false) {
-            let gp_right_index_rc = gp_node_borrow.child_nodes.1.as_ref().unwrap().getindex();
-            *gp_right_index_rc.borrow_mut() = r_index; 
+        // Determine if P was the left or right child of GP
+        if gp_node.child_nodes.0.as_ref().map(|idx| idx.get() == p_index).unwrap_or(false) {
+            // CRITICAL: Point GP's left child to a fresh IndexBox for R
+            *gp_node.child_nodes.0.as_ref().unwrap().getindex().borrow_mut() = r_index;
+        } else if gp_node.child_nodes.1.as_ref().map(|idx| idx.get() == p_index).unwrap_or(false) {
+            // CRITICAL: Point GP's right child to a fresh IndexBox for R
+            *gp_node.child_nodes.1.as_ref().unwrap().getindex().borrow_mut() = r_index;
         }
     }
-    
-    // --- Step 3: Update Right-Left Child's Parent (RL.parent = P) ---
-    if let Some(rl) = rl_ptr.as_ref() {
-        let rl_index = rl.get();
-        // Mutate the RL node's fields.
-        tree.get(rl_index).unwrap().borrow_mut().parent = Some(p_index_box.clone());
+
+    // --- 2.2. Update C's Parent to P ---
+    if let Some(c_idx) = c_index {
+        tree_vec[c_idx].borrow_mut().parent = Some(IndexBox::new(p_index));
     }
 
-    // --- Step 4: Update Pivot (P) Node's Fields (P.parent = R, P.right = RL) ---
+    // --- 2.3. Update P (Old Root) ---
     {
-        let pivot_node_mut = tree.get(pivot_index).unwrap();
-
-        pivot_node_mut.borrow_mut().parent = Some(r_ptr.clone()); 
-        pivot_node_mut.borrow_mut().child_nodes.1 = rl_ptr.clone();
+        let mut p_mut = tree_vec[p_index].borrow_mut();
+        // P's new parent is R
+        p_mut.parent = Some(IndexBox::new(r_index)); 
+        // P's new right child is C
+        p_mut.child_nodes.1 = c_index.map(|idx| IndexBox::new(idx)); // CRITICAL: Fresh IndexBox
     }
 
-    // --- Step 5: Update Right (R) Node's Fields (R.parent = GP, R.left = P) ---
+    // --- 2.4. Update R (New Root) ---
     {
-        let r_node = tree.get(r_index).unwrap();
-
-        r_node.borrow_mut().parent = gp_ptr.clone(); 
-        r_node.borrow_mut().child_nodes.0 = Some(p_index_box.clone());
+        let mut r_mut = tree_vec[r_index].borrow_mut();
+        // R's new parent is GP
+        r_mut.parent = gp_ptr; 
+        // R's new left child is P
+        r_mut.child_nodes.0 = Some(IndexBox::new(p_index)); // CRITICAL: Fresh IndexBox
     }
+
+    Ok(())
+}
+
+
+/// Sinks a Unary Operator (U) down to the Left Child of its Binary Child (B).
+/// Transformation: U( B(L, R) ) -> B( U(L), R )
+pub fn sink_left_unary_helper(
+    tree_vec_guard: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>,
+    u_index: usize
+) -> Result<(), &'static str> {
     
+    let tree = &mut **tree_vec_guard;
+    
+    // Indices and Pointers
+    let b_index: usize;
+    let gp_ptr: Option<IndexBox>;
+    let u_index_box = IndexBox::new(u_index);
+    
+    // CRITICAL: Get the raw index value of L outside any mutable block, 
+    // and explicitly discard the potentially linked l_ptr IndexBox.
+    let l_index_value: Option<usize>;
+
+    // 1. Data Gathering (Immutable Borrows)
+    {
+        let u_node = tree.get(u_index).ok_or("Unary index out of bounds")?;
+        let u_borrow = u_node.borrow();
+        
+        // Walk down through Enclose nodes to find the Binary Child (B) index
+        let mut current_idx_box = u_borrow.child_nodes.0.clone().ok_or("Unary op has no child to sink into")?;
+        loop {
+            let node_index = current_idx_box.get();
+            let node = tree.get(node_index).ok_or("Traversal failed in sinking")?;
+            let node_op = node.borrow().opperator.clone();
+            
+            if matches!(node_op, Opperator::Enclose) {
+                current_idx_box = node.borrow().child_nodes.0.clone().ok_or("Enclose node has no child")?;
+            } else {
+                b_index = node_index;
+                break;
+            }
+        }
+        
+        // Get Grandparent
+        gp_ptr = u_borrow.parent.clone();
+
+        // Get Left Child of B (L) - This is where Negate will end up
+        let b_node = tree.get(b_index).unwrap();
+        let l_ptr_temp = b_node.borrow().child_nodes.0.clone();
+        l_index_value = l_ptr_temp.as_ref().map(|l| l.get());
+    } 
+
+    // 2. Update Grandparent (GP) to point to B instead of U
+    if let Some(gp) = gp_ptr.as_ref() {
+        let gp_index = gp.get();
+        let gp_node = tree.get(gp_index).unwrap();
+        
+        // This *requires* a new scope for the mutable borrow of GP
+        {
+            let gp_borrow = gp_node.borrow_mut();
+
+            if gp_borrow.child_nodes.0.as_ref().map(|idx| idx.get() == u_index).unwrap_or(false) {
+                // Point GP's left child to B
+                *gp_borrow.child_nodes.0.as_ref().unwrap().getindex().borrow_mut() = b_index;
+            } else if gp_borrow.child_nodes.1.as_ref().map(|idx| idx.get() == u_index).unwrap_or(false) {
+                // Point GP's right child to B
+                *gp_borrow.child_nodes.1.as_ref().unwrap().getindex().borrow_mut() = b_index;
+            }
+        } // Borrow of GP dropped
+    }
+
+    // 3. Update L (The node Negate is wrapping around) to point back to U
+    if let Some(l_index) = l_index_value {
+        tree.get(l_index).unwrap().borrow_mut().parent = Some(u_index_box.clone());
+    }
+
+    // 4. Update U (Negate)
+    {
+        let u_node = tree.get(u_index).unwrap();
+        let mut u_mut = u_node.borrow_mut();
+        u_mut.parent = Some(IndexBox::new(b_index)); // Parent is now B (Fresh IndexBox)
+        
+        // CRITICAL FIX: Create a new IndexBox for L's index value. 
+        // DO NOT reuse the IndexBox cloned from B's original child pointer.
+        u_mut.child_nodes.0 = l_index_value.map(IndexBox::new); // Child is now L (Fresh IndexBox)
+        u_mut.child_nodes.1 = None;
+    }
+
+    // 5. Update B (The Binary Op)
+    {
+        let b_node = tree.get(b_index).unwrap();
+        let mut b_mut = b_node.borrow_mut();
+        b_mut.parent = gp_ptr; // Parent is now GP (Reused original GP Rc)
+        b_mut.child_nodes.0 = Some(u_index_box); // Left child is now U (Original IndexBox)
+    }
+
     Ok(())
 }
 
@@ -338,6 +416,14 @@ pub enum Opperator {
     ShiftLeft,         // <<
     ShiftRight,        // >>
 }
+impl Opperator {
+    pub fn unwrap_terminal(&self) -> Option<tokens>{
+        match self {
+            Opperator::Terminal(t) => {return Some(t.clone());}
+            _ => {return None}
+        }
+    }
+}
 
 pub struct Syntaxer {
     pub controler:TreeControler,
@@ -346,21 +432,40 @@ pub struct Syntaxer {
 impl Syntaxer {
     pub fn find_all_trees(&mut self, top_node:TreeNode) {
         // check if this tree is valid
-        match top_node.rule {
-            Rules::ExprToAssignEquation | Rules::ConditionToObjectHcon => {
+        match top_node.rule.clone() {
+            x if Self::detect_ast_start_node(&x) => {
                 self.valid_trees.push(top_node);
                 return ;
+            }
+            Rules::DeclToVar => {
+                return; // skip these
             }
             _ => {}
         }
         // if not continue looking
         for child in self.controler.tree_vector[top_node.this_node.unwrap()].clone().children{
-            self.find_all_trees(self.controler.get_weak(child).unwrap().clone());
+            self.find_all_trees(self.controler.clone().get_weak(child).unwrap().clone());
         }
     }
 
-    
-    pub fn make_tree(&self, top_node:TreeNode) -> Result<SyntaxTree,String>{
+    pub fn detect_ast_start_node(rule:&Rules)-> bool {
+        return matches!(rule, 
+            // expressions
+            Rules::ExprToAssignEquation |
+            // eq
+            Rules::EquationToObjectHeq |
+            Rules::EquationToEncloseHeq |
+            Rules::EquationToNegate |
+            Rules::EquationToNegCondition |
+
+            // cond
+            Rules::ConditionToObjectHcon |
+            Rules::ConditionToEnclosedHcon |
+            Rules::ConditionToNegate |
+            Rules::ConditionToNegEquation
+        );
+    }
+    pub fn make_tree(&mut self, top_node:TreeNode) -> Result<SyntaxTree,String>{
         // everything that can start a tree
         //println!("current rule: {}",top_node.rule.render());
         match top_node.rule {
@@ -695,313 +800,396 @@ impl Syntaxer {
         }
     }
 
-    // returns the index of the new root if the root was changed
-    // also optimizes tree. 
-    pub fn fix_tree(&self,tree:&SyntaxTree, tree_vec: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>, index: IndexBox) -> Result<IndexBox,String> {        
-        // 1. Get the current operator and rotation requirement (data gathering)
-        let (current_opperator, should_rotate) = {
+    
+    pub fn fix_tree(&self, tree:&SyntaxTree, tree_vec: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>, index: IndexBox) -> Result<IndexBox,String> {        
+        
+        // 1. Data Gathering for Operations (Read-only Phase)
+        let (op, should_rotate, should_sink_unary) = {
             let imutable_tree = tree_vec.clone();
             let current_node = imutable_tree.get(index.get())
                 .ok_or_else(|| "Index out of bounds in fix_tree.".to_string())?;
             
             let op = current_node.borrow().opperator.clone();
             let mut rotate = false;
+            let mut sink = false;
+
+            // --- CHECK FOR ROTATION (Structural and Precedence Fixes - Highest Priority) ---
             
-            if let Opperator::Multiply | Opperator::Divide = op {
-                // Note: Calling tree.get_right_child_index here creates a redundant second immutable borrow, 
-                // but is fine since it's only reading.
-                let right_ind = tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
+            // 1. Left-Associativity (e.g., Multiply/Divide over Multiply/Divide)
+            if let Opperator::Multiply | Opperator::Divide = op { 
+                let right_ind = current_node.borrow().child_nodes.1.clone();
                 if let Some(right_idx_box) = right_ind {
-                    let right_node_index = right_idx_box.get();
-                    if let Some(right_node) = imutable_tree.get(right_node_index) {
+                    if let Some(right_node) = imutable_tree.get(right_idx_box.get()) {
                         let right_op = right_node.borrow().opperator.clone();
-                        if !matches!(right_op, Opperator::Terminal(_)) {
+                        if matches!(right_op, Opperator::Multiply | Opperator::Divide) { 
                             rotate = true;
-                        } else if matches!(right_op, Opperator::Terminal(_)){
-                            // there be a terminal there :3
-                            // check if number if power of 2
-                            let ispower:bool;
-                            let number_to_shift:i32;
-                            let inverted:bool;
-                            let offset:i32; //for 2^n+-1 case; either -1, 0, 1
-                            match right_op.clone() {
-                                Opperator::Terminal(tok) => {
-                                    if matches!(tok, tokens::Number(_)){
-                                        let n = tok.extract_int_value().unwrap();
-                                        let log2 = f64::log2(n as f64);
-                                        if log2.floor() == log2{
-                                            //power of 2 100%
-                                            ispower = true;
-                                            inverted = false;
-                                            number_to_shift = log2 as i32;
-                                            offset = 0;
-                                            println!("number in question is: {}",n);
-                                        } else {
-                                            // n is not exacty power of 2, check 2^n +-1
-                                            let minus1 = f64::log2((n-1) as f64);
-                                            let plus1 = f64::log2((n+1) as f64);
-                                            if minus1.floor() == minus1{
-                                                // minus 1
-                                                // add x
-                                                ispower = true;
-                                                inverted = false;
-                                                number_to_shift = minus1 as i32;
-                                                offset = 1;
-                                            } else if plus1.floor() == plus1 {
-                                                // plus 1
-                                                // subtract x
-                                                ispower = true;
-                                                inverted = false;
-                                                number_to_shift = plus1 as i32;
-                                                offset = -1;
-                                            }
-                                            else {
-                                                // nope
-                                                ispower = false;
-                                                inverted = false;
-                                                number_to_shift = 0;
-                                                offset = 0;
-                                            }
-                                        }
-                                    } else if matches!(tok, tokens::Real(r)) {
-                                        let r = tok.extract_float_value().unwrap();
-                                        let log2 = f64::log2(r);
-                                        // now i have to check if this is a damn number
-                                        if log2.floor() == log2 {
-                                            // sure is :3
-                                            ispower = true;
-                                            inverted = r < 1.0;
-                                            number_to_shift = log2 as i32;
-                                            offset = 0;
-                                            println!("number in question is: {}",r);
-                                        } else {
-                                            // n is not exacty power of 2, check 2^n +-1
-                                            let minus1 = f64::log2(r-1.0);
-                                            let plus1 = f64::log2(r+1.0);
-                                            if minus1.floor() == minus1{
-                                                // minus 1
-                                                // add x
-                                                ispower = true;
-                                                inverted = r < 1.0;
-                                                number_to_shift = minus1 as i32;
-                                                offset = 1;
-                                            } else if plus1.floor() == plus1 {
-                                                // plus 1
-                                                // subtract x
-                                                ispower = true;
-                                                inverted = r < 1.0;
-                                                number_to_shift = plus1 as i32;
-                                                offset = -1;
-                                            }
-                                            else {
-                                                // nope
-                                                ispower = false;
-                                                inverted = false;
-                                                number_to_shift = 0;
-                                                offset = 0;
-                                            }
-                                        }
+                        }
+                    }
+                }
+            }
 
-                                    }else {
-                                        ispower = false;
-                                        inverted = false;
-                                        number_to_shift = 0;
-                                        offset = 0;
-                                    }
-                                }
-                                _ => {
-                                    ispower = false;
-                                    inverted = false;
-                                    number_to_shift = 0;
-                                    offset = 0;
-                                } // nothin on failure
+            // 1a. CRITICAL FIX: Standard Arithmetic Precedence Rotation (Divide/Multiply over Plus/Minus)
+            // This promotes the Plus node over the Divide node.
+            if !rotate {
+                if let Opperator::Multiply | Opperator::Divide = op { 
+                    let right_ind = current_node.borrow().child_nodes.1.clone();
+                    if let Some(right_idx_box) = right_ind {
+                        if let Some(right_node) = imutable_tree.get(right_idx_box.get()) {
+                            let right_op = right_node.borrow().opperator.clone();
+                            if matches!(right_op, Opperator::Plus | Opperator::Minus) { 
+                                rotate = true;
                             }
-
-                            if ispower {
-                                // we need to do somethin somethin
-                                // if so, replace with either bitshift forwards or back.
-                                if (matches!(op, Opperator::Multiply) && !inverted) || (matches!(op, Opperator::Divide) && inverted){
-                                    // left shift
-                                    if offset == 0 {
-                                        // no offset
-
-                                        // replace top node op code with left shift
-                                        let mut mut_top = current_node.borrow_mut();
-                                        mut_top.opperator = Opperator::ShiftLeft; // no way this just works wtf
-
-                                        // replace terminal in right node with number_to_shift
-                                        let mut mut_right = right_node.borrow_mut();
-                                        mut_right.opperator = Opperator::Terminal(tokens::Number(number_to_shift));
-                                    } else {
-                                        // some offset. restructure the nodes to an addition and then leftshift
-
-                                        // take top
-                                        let mut mut_top = current_node.borrow_mut();
-                                        if offset == 1{
-                                            mut_top.opperator = Opperator::Plus;
-                                        } else { // implied minus 1
-                                            mut_top.opperator = Opperator::Minus;
-                                        }
-                                        
-                                        // save whats on the left node as x
-                                        let x_ind = mut_top.child_nodes.0.clone().unwrap();
-                                        let x_node = imutable_tree[x_ind.get()].borrow();
-                                        let x_opperator = x_node.opperator.clone();
-
-                                        // replace right side
-                                        let mut mut_right = right_node.borrow_mut();
-                                        mut_right.opperator = Opperator::ShiftLeft;
-                                        let right_ind = mut_top.child_nodes.1.clone().unwrap();
-                                        
-                                        // make children
-                                        let left = SyntaxTreeNode::child(right_ind.clone(), x_opperator, Value::Null);
-                                        let left_box = Rc::new(RefCell::new(left));
-                                        let left_ind = IndexBox::new(tree_vec.len());
-
-                                        let right = SyntaxTreeNode::child(right_ind.clone(), Opperator::Terminal(tokens::Number(number_to_shift)), Value::Null);
-                                        let right_box = Rc::new(RefCell::new(right));
-                                        let right_ind = IndexBox::new(tree_vec.len()+1);
-
-
-                                        // put children in vector
-
-                                        tree_vec.push(Rc::clone(&left_box));
-                                        tree_vec.push(Rc::clone(&right_box));
-                                        
-                                        // give children to right
-
-                                        mut_right.child_nodes = (
-                                            Some(left_ind),
-                                            Some(right_ind)
-                                        )                                        
-                                    }
-                                }
-                                else if (matches!(op, Opperator::Divide) && !inverted) || (matches!(op, Opperator::Multiply) && inverted){
-                                    // right shift
-                                    if offset == 0 {
-                                        // replace top node op code with left shift
-                                        let mut mut_top = current_node.borrow_mut();
-                                        mut_top.opperator = Opperator::ShiftRight; // no way this just works wtf
-
-                                        // replace terminal in right node with number_to_shift
-                                        let mut mut_right = right_node.borrow_mut();
-                                        mut_right.opperator = Opperator::Terminal(tokens::Number(number_to_shift));
-                                    } else {
-                                        // some offset. restructure the nodes to an addition and then right shift
-                                        
-                                    }
-                                }
-                                println!("optimization Done!!");
-                                current_node.borrow().render_node(tree_vec, 0, false);
-                                println!("stats: offset {}. number to shift {}\n", offset, number_to_shift);
-                            }
-
-                            
                         }
-                    } else {
-                        return Err("Right child index points to invalid node.".to_string());
-                    }
-                }
-                // OPTIMIZATION, STRENGTH REDUCTION
-                
-
-            }
-            // if condition and there is an and /or to the right rootate
-            if let Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals | Opperator::Equals | Opperator::NotEquals | Opperator::Not = op {
-                let right_ind = tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
-                if let Some(right_idx_box) = right_ind {
-                    let right_node_index = right_idx_box.get();
-                    if let Some(right_node) = tree_vec.get(right_node_index) {
-                        if matches!(right_node.borrow().opperator, Opperator::And | Opperator::Or) {
-                            rotate = true;
-                        }
-                    } else {
-                        return Err("Right child index points to invalid node.".to_string());
                     }
                 }
             }
-            // if any math next to any condition
-            if let Opperator::Plus | Opperator::Minus | Opperator::Multiply | Opperator::Divide | Opperator::Negate = op {
-                let right_ind = tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
-                if let Some(right_idx_box) = right_ind {
-                    let right_node_index = right_idx_box.get();
-                    if let Some(right_node) = tree_vec.get(right_node_index) {
-                        if matches!(right_node.borrow().opperator, Opperator::And | Opperator::Or | Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals | Opperator::Equals | Opperator::NotEquals | Opperator::Not) {
-                            rotate = true;
-                        }
-                    } else {
-                        return Err("Right child index points to invalid node.".to_string());
-                    }
-                }
-            }
-            if let Opperator::Enclose  = op {
-                let right_ind = tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
-                if let Some(right_idx_box) = right_ind {
-                    let right_node_index = right_idx_box.get();
-                    if let Some(right_node) = tree_vec.get(right_node_index) {
-                        if matches!(right_node.borrow().opperator, Opperator::And | Opperator::Or | Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals | Opperator::Equals | Opperator::NotEquals | Opperator::Not) {
-                            rotate = true;
-                        }
-                    } else {
-                        return Err("Right child index points to invalid node.".to_string());
-                    }
-                }
-            }
-
-            (op, rotate)
             
-        }; // <--- vector_borrow (Immutable Borrow 1) is dropped here.
-        
-        //println!("Current opperator: {:?}", current_opperator);
+            // 2. Conditions over Logical (Comparison over AND/OR)
+            if !rotate {
+                if let Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals | Opperator::Equals | Opperator::NotEquals | Opperator::Not = op {
+                    let right_ind = imutable_tree.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
+                    if let Some(right_idx_box) = right_ind {
+                        let right_node_index = right_idx_box.get();
+                        if let Some(right_node) = imutable_tree.get(right_node_index) {
+                            if matches!(right_node.borrow().opperator, Opperator::And | Opperator::Or) {
+                                rotate = true;
+                            }
+                        } 
+                    }
+                }
+            }
+            
+            // 3. Math over Conditions/Logical (Math over Comparison/Logical)
+            if !rotate {
+                if let Opperator::Plus | Opperator::Minus | Opperator::Multiply | Opperator::Divide | Opperator::Negate = op { 
+                    let right_ind = imutable_tree.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
+                    if let Some(right_idx_box) = right_ind {
+                        let right_node_index = right_idx_box.get();
+                        if let Some(right_node) = imutable_tree.get(right_node_index) {
+                            if matches!(right_node.borrow().opperator, Opperator::And | Opperator::Or | Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals | Opperator::Equals | Opperator::NotEquals | Opperator::Not) {
+                                rotate = true;
+                            }
+                        } 
+                    }
+                }
+            }
 
-        // 2. Perform rotation if needed
+            // 4. CRITICAL STRUCTURAL FIX: Enclose over any other non-Terminal operator
+            if !rotate {
+                if let Opperator::Enclose  = op {
+                    let right_ind = current_node.borrow().child_nodes.1.clone();
+                    if let Some(right_idx_box) = right_ind {
+                        if let Some(right_node) = imutable_tree.get(right_idx_box.get()) {
+                            if !matches!(right_node.borrow().opperator, Opperator::Terminal(_)) {
+                                rotate = true;
+                            }
+                        } 
+                    }
+                }
+            }
+            
+            // --- CHECK FOR UNARY SINKING (Precedence Fix) ---
+            if !rotate { 
+                if matches!(op, Opperator::Negate | Opperator::Not) {
+                    
+                    let left_child_idx = current_node.borrow().child_nodes.0.clone();
+                    let mut can_sink = true;
+
+                    // CRITICAL PRE-SINK CHECK: Do not sink if the immediate child is an Enclose that needs rotation.
+                    if let Some(l_idx_box) = left_child_idx.clone() {
+                        if let Some(l_node) = imutable_tree.get(l_idx_box.get()) {
+                            // This check ensures we always fix the Enclose's structure before trying to sink the Negate.
+                            if matches!(l_node.borrow().opperator, Opperator::Enclose) && l_node.borrow().child_nodes.1.is_some() {
+                                can_sink = false; 
+                            }
+                        }
+                    }
+                    
+                    if can_sink {
+                        let mut current_idx_box = left_child_idx;
+                        let mut target_op = Opperator::Terminal(super::lexical_analyzer::tokens::Null); 
+                        
+                        // Walk down through Enclose nodes to find the first non-Enclose operator
+                        while let Some(idx_box) = current_idx_box.take() {
+                            let node_index = idx_box.get();
+                            if let Some(node) = imutable_tree.get(node_index) {
+                                let node_op = node.borrow().opperator.clone();
+                                
+                                if matches!(node_op, Opperator::Enclose) {
+                                    current_idx_box = node.borrow().child_nodes.0.clone();
+                                } else {
+                                    target_op = node_op;
+                                    break;
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+                        
+                        // Trigger sink if the unary op is above a binary op
+                        if matches!(target_op, Opperator::Plus | Opperator::Minus | Opperator::Multiply | Opperator::Divide | Opperator::And | Opperator::Or | Opperator::Equals | Opperator::NotEquals | Opperator::Less | Opperator::LessEquals | Opperator::Greater | Opperator::GreaterEquals) {
+                            sink = true;
+                        }
+                    }
+                }
+            }
+
+            (op, rotate, sink)
+        }; 
+
+        // 2. Perform Rotation (MUST BE FIRST)
         if should_rotate {
-            //println!("Left rotation happens");
-            
-            // Use an inner scope to ensure the mutable borrow is fully released
-            // BEFORE the recursive call to fix_tree.
+            let old_root_index = index.get();
             let new_root_index = {
+                rotate_left_helper(&mut *tree_vec, old_root_index)?;
                 
-                // Call the new helper function
-                rotate_left_helper(&mut *tree_vec, index.get())?;
-                
-                // Use the `tree_vec_mut` to find the parent.
-                let idx = tree_vec[index.get()].borrow().parent
+                let idx = tree_vec[old_root_index].borrow().parent
                     .as_ref().map(|p| p.get())
                     .ok_or_else(|| "Rotated node lost its parent pointer.".to_string())?;
-
-                // The mutable borrow `tree_vec_mut` is dropped implicitly here 
-                // as this inner scope ends. The RefCell is now unlocked.
                 idx
             };
-            
-            // Now the recursive call can safely occur.
-            return  Ok(self.fix_tree(tree,tree_vec, IndexBox::new(new_root_index))?);
+            // Recursively fix the new root immediately
+            println!("recurse path 2 (Rotation complete from index {})", old_root_index);
+            return Ok(self.fix_tree(tree, tree_vec, IndexBox::new(new_root_index))?);
         }
+        
+        // 3. Perform Sinking (MUST BE SECOND)
+        if should_sink_unary {
+            let old_root_index = index.get();
+            let new_root_index = {
+                sink_left_unary_helper(&mut *tree_vec, old_root_index)?;
+                
+                let idx = tree_vec[old_root_index].borrow().parent
+                    .as_ref().map(|p| p.get())
+                    .ok_or_else(|| "Sunk node lost its parent pointer.".to_string())?;
+                idx
+            };
+            // Recursively fix the new root immediately
+            println!("recurse path 1 (Sinking complete from index {})", old_root_index);
+            return Ok(self.fix_tree(tree, tree_vec, IndexBox::new(new_root_index))?);
+        } 
 
-        // 3. Standard Recursion: Apply fix_tree to children.
-
-        // FIX: Enforce a new scope for the left child index lookup.
+        // 4. Standard Recursion on Children
+        
         let left_ind = {
             tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.0.clone())
         };
         if let Some(left_idx_box) = left_ind {
-            self.fix_tree(tree, tree_vec,left_idx_box)?;
+            println!("recurse path 3: {} and {}",index.get(),left_idx_box.get());
+            self.fix_tree(tree, tree_vec, left_idx_box)?;
         }
-        
-        // FIX: Enforce a new scope for the right child index lookup.
-        // This is the CRITICAL line that prevents the implicit borrow lifetime extension 
-        // from overlapping with the nested fix_tree call's attempt to borrow_mut.
+
         let right_ind = {
             tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone())
-        }; // Any internal Ref is dropped here.
+        };
         
         if let Some(right_idx_box) = right_ind {
-            // Line 799: No active immutable borrow from the lookup is held here.
-            self.fix_tree(tree, tree_vec,right_idx_box)?;
+            println!("recurse path 4: {} and {}",index.get(),right_idx_box.get());
+            self.fix_tree(tree, tree_vec, right_idx_box)?;
         }
 
         Ok(index)
     }
+
+    pub fn optimizer(&self,tree:&SyntaxTree, tree_vec: &mut RefMut<'_, Vec<Rc<RefCell<SyntaxTreeNode>>>>, index: IndexBox) -> Result<IndexBox,String> {
+        let imutable_tree = tree_vec.clone();
+        let current_node = imutable_tree.get(index.get())
+            .ok_or_else(|| "Index out of bounds in fix_tree.".to_string())?;
+        let op = current_node.borrow().opperator.clone();
+        if let Opperator::Multiply | Opperator::Divide = op {
+            // Note: Calling tree.get_right_child_index here creates a redundant second immutable borrow, 
+            // but is fine since it's only reading.
+            let right_ind = tree_vec.get(index.get()).and_then(|root| root.borrow().child_nodes.1.clone());
+            if let Some(right_idx_box) = right_ind {
+                let right_node_index = right_idx_box.get();
+                if let Some(right_node) = imutable_tree.get(right_node_index) {
+                    let right_op = right_node.borrow().opperator.clone();
+                    if matches!(right_op, Opperator::Terminal(_)){
+                        // there be a terminal there :3
+                        // check if number if power of 2
+                        let ispower:bool;
+                        let number_to_shift:i32;
+                        let inverted:bool;
+                        let offset:i32; //for 2^n+-1 case; either -1, 0, 1
+                        match right_op.clone() {
+                            Opperator::Terminal(tok) => {
+                                if matches!(tok, tokens::Number(_)){
+                                    let n = tok.extract_int_value().unwrap();
+                                    let log2 = f64::log2(n as f64);
+                                    if log2.floor() == log2{
+                                        //power of 2 100%
+                                        ispower = true;
+                                        inverted = false;
+                                        number_to_shift = log2 as i32;
+                                        offset = 0;
+                                        println!("1number in question is: {}",n);
+                                    } else {
+                                        // n is not exacty power of 2, check 2^n +-1
+                                        let minus1 = f64::log2((n-1) as f64);
+                                        let plus1 = f64::log2((n+1) as f64);
+                                        if minus1.floor() == minus1{
+                                            // minus 1
+                                            // add x
+                                            ispower = true;
+                                            inverted = false;
+                                            number_to_shift = minus1 as i32;
+                                            offset = 1;
+                                        } else if plus1.floor() == plus1 {
+                                            // plus 1
+                                            // subtract x
+                                            ispower = true;
+                                            inverted = false;
+                                            number_to_shift = plus1 as i32;
+                                            offset = -1;
+                                        }
+                                        else {
+                                            // nope
+                                            ispower = false;
+                                            inverted = false;
+                                            number_to_shift = 0;
+                                            offset = 0;
+                                        }
+                                    }
+                                } else if matches!(tok, tokens::Real(r)) {
+                                    let r = tok.extract_float_value().unwrap();
+                                    let log2 = f64::log2(r);
+                                    // now i have to check if this is a damn number
+                                    if log2.floor() == log2 {
+                                        // sure is :3
+                                        ispower = true;
+                                        inverted = r < 1.0;
+                                        number_to_shift = log2 as i32;
+                                        offset = 0;
+                                        println!("2number in question is: {}",r);
+                                    } else {
+                                        // n is not exacty power of 2, check 2^n +-1
+                                        let minus1 = f64::log2(r-1.0);
+                                        let plus1 = f64::log2(r+1.0);
+                                        if minus1.floor() == minus1{
+                                            // minus 1
+                                            // add x
+                                            ispower = true;
+                                            inverted = r < 1.0;
+                                            number_to_shift = minus1 as i32;
+                                            offset = 1;
+                                        } else if plus1.floor() == plus1 {
+                                            // plus 1
+                                            // subtract x
+                                            ispower = true;
+                                            inverted = r < 1.0;
+                                            number_to_shift = plus1 as i32;
+                                            offset = -1;
+                                        }
+                                        else {
+                                            // nope
+                                            ispower = false;
+                                            inverted = false;
+                                            number_to_shift = 0;
+                                            offset = 0;
+                                        }
+                                    }
+
+                                }else {
+                                    ispower = false;
+                                    inverted = false;
+                                    number_to_shift = 0;
+                                    offset = 0;
+                                }
+                            }
+                            _ => {
+                                ispower = false;
+                                inverted = false;
+                                number_to_shift = 0;
+                                offset = 0;
+                            } // nothin on failure
+                        }
+
+                        if ispower {
+                            // we need to do somethin somethin
+                            // if so, replace with either bitshift forwards or back.
+                            if (matches!(op, Opperator::Multiply) && !inverted) || (matches!(op, Opperator::Divide) && inverted){
+                                // left shift
+                                if offset == 0 {
+                                    // no offset
+
+                                    // replace top node op code with left shift
+                                    let mut mut_top = current_node.borrow_mut();
+                                    mut_top.opperator = Opperator::ShiftLeft; // no way this just works wtf
+
+                                    // replace terminal in right node with number_to_shift
+                                    let mut mut_right = right_node.borrow_mut();
+                                    mut_right.opperator = Opperator::Terminal(tokens::Number(number_to_shift));
+                                } else {
+                                    // some offset. restructure the nodes to an addition and then leftshift
+
+                                    // take top
+                                    let mut mut_top = current_node.borrow_mut();
+                                    if offset == 1{
+                                        mut_top.opperator = Opperator::Plus;
+                                    } else { // implied minus 1
+                                        mut_top.opperator = Opperator::Minus;
+                                    }
+                                    
+                                    // save whats on the left node as x
+                                    let x_ind = mut_top.child_nodes.0.clone().unwrap();
+                                    let x_node = imutable_tree[x_ind.get()].borrow();
+                                    let x_opperator = x_node.opperator.clone();
+
+                                    // replace right side
+                                    let mut mut_right = right_node.borrow_mut();
+                                    mut_right.opperator = Opperator::ShiftLeft;
+                                    let right_ind = mut_top.child_nodes.1.clone().unwrap();
+                                    
+                                    // make children
+                                    let left = SyntaxTreeNode::child(right_ind.clone(), x_opperator, Value::Null);
+                                    let left_box = Rc::new(RefCell::new(left));
+                                    let left_ind = IndexBox::new(tree_vec.len());
+
+                                    let right = SyntaxTreeNode::child(right_ind.clone(), Opperator::Terminal(tokens::Number(number_to_shift)), Value::Null);
+                                    let right_box = Rc::new(RefCell::new(right));
+                                    let right_ind = IndexBox::new(tree_vec.len()+1);
+
+
+                                    // put children in vector
+
+                                    tree_vec.push(Rc::clone(&left_box));
+                                    tree_vec.push(Rc::clone(&right_box));
+                                    
+                                    // give children to right
+
+                                    mut_right.child_nodes = (
+                                        Some(left_ind),
+                                        Some(right_ind)
+                                    )                                        
+                                }
+                            }
+                            else if (matches!(op, Opperator::Divide) && !inverted) || (matches!(op, Opperator::Multiply) && inverted){
+                                // right shift
+                                if offset == 0 {
+                                    // replace top node op code with left shift
+                                    let mut mut_top = current_node.borrow_mut();
+                                    mut_top.opperator = Opperator::ShiftRight; // no way this just works wtf
+
+                                    // replace terminal in right node with number_to_shift
+                                    let mut mut_right = right_node.borrow_mut();
+                                    mut_right.opperator = Opperator::Terminal(tokens::Number(number_to_shift));
+                                } else {
+                                    // some offset. restructure the nodes to an addition and then right shift
+                                    return Err("unimplemented".to_string());
+                                }
+                            }
+                            println!("optimization Done!!");
+                            current_node.borrow().render_node(tree_vec, 0, false);
+                            println!("stats: offset {}. number to shift {}\n", offset, number_to_shift);
+                        }
+                    }
+                } else {
+                    return Err("Right child index points to invalid node.".to_string());
+                }
+            }
+        }
+        Ok(index)
+    }
+
 }
 

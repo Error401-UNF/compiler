@@ -1,5 +1,5 @@
 {
-    bool status_array [ 3 ] ;
+    bool[3] status_array ;
     int val_a ;
     int val_b ;
     val_a = 5 ;

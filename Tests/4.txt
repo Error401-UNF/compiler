@@ -2,5 +2,5 @@
     int[2][3] matrix ;
     int row_index ;
     row_index = 0 ;
-    matrix[row_index][(row_index == 0 && true) || false] = 42 ;
+    matrix[row_index+2][3 + (row_index - 1 && true || ! false)] = 42 ;
 }

@@ -3,8 +3,8 @@
     float result ;
     i = 10 ;
     result = 5.5 ;
-    if (i * 31 + 10 < 35) {
+    if (((i + 10) < 35) != false) {
         if (result * 2 == 11.0) result = result / 16.0 ;
-            else result = 1.0 - result + 2;
+        else result = 1.0 - result + 2;
     } else result = 0.0 ;
 }

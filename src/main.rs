@@ -17,13 +17,11 @@ use std::process::ExitCode;
 use std::rc::Rc;
 
 use parser::Parser;
-use symbol_table::Env;
+use symbol_table::{Env, AddressedEnv};
 use lexical_analyzer::Lexer;
 use type_checker::size_calculator;
-use syntax_evaluator::Syntaxer;
-
-use crate::syntax_evaluator::SyntaxTree;
-use crate::syntax_evaluator::{IndexBox, SyntaxTreeNode};
+use syntax_evaluator::{Syntaxer,SyntaxTree,IndexBox};
+use Intermideate_generator::{RecordManager,CodeMetaData};
 
 
 fn main() -> ExitCode{
@@ -57,7 +55,8 @@ fn main() -> ExitCode{
                     return ExitCode::from(1);
                 } else {
                     println!("Parsing Finished");
-                    let mut controller = res.unwrap();
+                    let controller = res.unwrap();
+                    //controller.render_node(0, 0);
                     let size_out = size_calculator(&lexer.root_env);
                     println!("Size calculations\n{:?}",size_out.unwrap());
                 
@@ -92,15 +91,46 @@ fn main() -> ExitCode{
                             return ExitCode::from(1);
                         }
                     }
+                    // /* 
                     println!("tree displays");
-                    for ast in all_ast_trees {
+                    for ast in all_ast_trees.clone() {
                         let ind = ast.top_node.get();
                         let tree_vec = ast.tree_vector.borrow();
                         let top_node = tree_vec[ind].borrow();
                         top_node.render_node(&tree_vec, 0,true);
                     }
-                   
+                    // */
                     println!("Syntaxing finished");
+
+                    // generate intermidiate code
+                    println!("Generating Intermidate Code");
+                    // turn env into static env's
+                    let addr_env = AddressedEnv::from_root(lexer.root_env);
+                    println!("Starting Addressed env \n{}",addr_env.display_all());
+                    let mut record_manager = RecordManager {
+                        all_records: Vec::new(),
+                        tree_controler: controler_copy,
+                        global_env: addr_env,
+                        temp_count: 0,
+                        ast_roots: all_ast_trees,
+                    };
+                    let starting_metadata = CodeMetaData {
+                        tree_index: 0,
+                        ast_index: 0,
+                        current_scope: 0,
+                        loop_exit_pointers: Vec::new(),
+                        loop_start_location: 0,
+                        result_id: "".to_string(),
+                    };
+                    let result = record_manager.generate_code(starting_metadata);
+                    if result.is_err() {
+                        println!("Code Generation Error: {}", result.unwrap_err());
+                        return ExitCode::from(1);
+                    }
+                    println!("\n\nAddressed Env with temp\n{}",record_manager.global_env.display_all());
+                    
+                    println!("Generated Code:\n{}",record_manager.print_records());
+
                     return ExitCode::from(0);
                 }
             }

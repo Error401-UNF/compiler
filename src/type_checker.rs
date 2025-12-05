@@ -100,37 +100,70 @@ pub fn get_base_type(v:Rc<Value>,mut arr:Vec<usize>) -> (Value,Vec<usize>) {
     }
 }
 
-pub fn widen(first:Value, second:Value) -> Result<(Value,Value), String>{
+pub fn widen(first:&Value, second:&Value) -> Result<(Value,Value), String>{
     // this language only has like 3 types this is a very sumple function
-    // float > int
+    // float > int > bool
     match first {
         Value::AnyFloat | Value::Float(_)  => {
-            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null | Value::AnyBool | Value::Bool(_)){
+            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null){
                 if let Value::Float(_) = second {
-                    return Ok((first, second));
+                    return Ok((first.clone(), second.clone()));
                 }
                 if let Value::Int(i) = second {
-                    return Ok((first, Value::Float(i as f64)));
+                    return Ok((first.clone(), Value::Float(i.clone() as f64)));
                 }
-                return Ok((first, Value::AnyFloat));
+                if let Value::Bool(b) = second {
+                    return Ok((first.clone(), Value::Float(b.clone() as i32 as f64)));
+                }
+                return Ok((first.clone(), Value::AnyFloat));
             } 
-            return Err(format!("Invalid Type Matchup"));
+            return Err(format!("Invalid Type Matchup: {:?}:{:?}", first, second));
         },
         Value::AnyInt | Value::Int(_)  => {
-            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null | Value::AnyBool | Value::Bool(_)){
+            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null){
+                if let Value::Float(_) | Value::AnyFloat = second {
+                    if let Value::Int(i) = first {
+                        return Ok((Value::Float(i.clone() as f64), second.clone()));
+                    }
+                    else {
+                        return Ok((Value::AnyFloat, second.clone()));
+                    }
+                }
                 if let Value::Int(_) | Value::AnyInt = second {
-                    return Ok((first, second));
+                    return Ok((first.clone(), second.clone()));
                 }
-                // widen first
-                if let Value::Int(i) = first {
-                    return Ok((Value::Float(i as f64), second));
+                if let Value::Bool(b) = second {
+                    return Ok((first.clone(), Value::Int(b.clone() as i32)));
                 }
-                return Ok((Value::AnyFloat, second));
             } 
-            return Err(format!("Invalid Type Matchup"));
+            return Err(format!("Invalid Type Matchup: {:?}:{:?}", first, second));
+        }
+        Value::AnyBool | Value::Bool(_) => {
+            if !matches!(second, Value::ArrayOf(_,_ ) | Value::Null){
+                if let Value::Float(_) | Value::AnyFloat = second {
+                    if let Value::Bool(b) = first {
+                        return Ok((Value::Float(b.clone() as i32 as f64), second.clone()));
+                    }
+                    else {
+                        return Ok((Value::AnyFloat, second.clone()));
+                    }
+                }
+                if let Value::Int(_) | Value::AnyInt = second {
+                    if let Value::Bool(b) = first {
+                        return Ok((Value::Int(b.clone() as i32), second.clone()));
+                    }
+                    else {
+                        return Ok((Value::AnyInt, second.clone()));
+                    }
+                }
+                if let Value::Bool(_) | Value::AnyBool = second {
+                    return Ok((first.clone(), second.clone()));
+                }
+            }
+            return Err(format!("Invalid Type Matchup: {:?}:{:?}", first, second));
         }
         _ => {
-            return Err(format!("Invalid Type Matchup"));
+            return Err(format!("Invalid Full Type Matchup: {:?}:{:?}", first, second));
         }
     }
 }
