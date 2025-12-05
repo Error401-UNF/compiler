@@ -1251,7 +1251,6 @@ mod array_tests {
         // Create a dummy scope for temps
         let dummy_env = StaticAddressedEnv { heap_end: 0, address_list: RefCell::new(HashMap::new()), parent: None };
         rec_manager.global_env.enviornment_list.push(dummy_env);
-        let scope_index = rec_manager.global_env.enviornment_list.len() - 1;
 
 
         // 3. Setup AST for 'i[2][4]' (Indices: [0] for 4, [1] for 2, [2] for ID 'i')

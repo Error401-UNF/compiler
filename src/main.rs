@@ -80,7 +80,8 @@ fn main() -> ExitCode{
                             let mut vector_borrow = vector_clone.borrow_mut();
                             let r  = syntaxer.fix_tree(&ok_tree, &mut vector_borrow,IndexBox::new(0));
                             if r.is_ok() {
-                                ok_tree.top_node = r.unwrap();
+                                let r2 = syntaxer.optimizer(&mut vector_borrow,r.unwrap());
+                                ok_tree.top_node = r2.unwrap();
                                 all_ast_trees.push(ok_tree);
                             } else {
                                 println!("tree fix error: {}", r.unwrap_err());
