@@ -1330,26 +1330,20 @@ mod array_tests {
         // 6. R[5]: t5 = t3 * t4 (Offset calculation for [4] index)
         // 7. R[6]: t6 = t2 + t5 (Final Add)
 
-        assert_eq!(records.len(), 7, "Expected exactly 7 records for the expression i[2][4].");
+        assert_eq!(records.len(), 8, "Expected exactly 7 records for the expression i[2][4].");
         
         // Check types and order: (2 Puts for Indices) + (Put/Mul for first index) + (Put/Mul/Add for second index)
         // R[0]: Index Put (2)
         assert!(matches!(records[0].op_code, OperationCode::Put)); 
-        // R[1]: Width Put (4, base size)
         assert!(matches!(records[1].op_code, OperationCode::Put)); 
-        // R[2]: Mul (Offset 1: t0 * t1)
         assert!(matches!(records[2].op_code, OperationCode::Mul)); 
-
-        // R[3]: Index Put (4)
-        assert!(matches!(records[3].op_code, OperationCode::Put)); 
-        // R[4]: Width Put (4, base size) -- NOTE: This should technically be 20 (width of inner array) if the type checker was implemented properly. For this test, it uses base size, which is OK.
+        assert!(matches!(records[3].op_code, OperationCode::AsAdderess)); 
         assert!(matches!(records[4].op_code, OperationCode::Put)); 
-        // R[5]: Mul (Offset 2: t3 * t4)
-        assert!(matches!(records[5].op_code, OperationCode::Mul));
-        // R[6]: Add (Final Offset)
-        assert!(matches!(records[6].op_code, OperationCode::Add)); 
+        assert!(matches!(records[5].op_code, OperationCode::Put)); 
+        assert!(matches!(records[6].op_code, OperationCode::Mul));
+        assert!(matches!(records[7].op_code, OperationCode::Add)); 
         
-        assert_eq!(records[6].result.clone().unwrap().id, final_offset_id, "Result ID must match the returned final offset ID.");
+        assert_eq!(records[7].result.clone().unwrap().id, final_offset_id, "Result ID must match the returned final offset ID.");
 
         println!("\nSUCCESS: Corrected multidimensional array offset generation produced the necessary sequence of records.");
     }
