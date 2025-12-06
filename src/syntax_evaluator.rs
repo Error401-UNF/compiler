@@ -988,7 +988,7 @@ impl Syntaxer {
                                             inverted = false;
                                             number_to_shift = log2 as i32;
                                             offset = 0;
-                                            println!("1number in question is: {}",n);
+                                            //println!("1number in question is: {}",n);
                                         } else {
                                             let minus1 = f64::log2((n-1) as f64);
                                             let plus1 = f64::log2((n+1) as f64);
@@ -1014,7 +1014,7 @@ impl Syntaxer {
                                             inverted = r < 1.0;
                                             number_to_shift = log2.round() as i32;
                                             offset = 0;
-                                            println!("2number in question is: {}",r);
+                                            //println!("2number in question is: {}",r);
                                         } else {
                                             let minus1 = f64::log2(r-1.0);
                                             let plus1 = f64::log2(r+1.0);
@@ -1122,7 +1122,7 @@ impl Syntaxer {
                 }
             }
             //println!("optimization Done!!");
-            tree_vec[index.get()].borrow().render_node(tree_vec, 0, false);
+            //tree_vec[index.get()].borrow().render_node(tree_vec, 0, false);
             //println!("stats: offset {}. number to shift {}\n", offset, number_to_shift);
         }
 
